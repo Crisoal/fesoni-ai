@@ -440,6 +440,9 @@ export class FoxitService {
       const templateBase64 = await this.getStyleTemplate();
       console.log('Template loaded successfully');
 
+      // Debug: Analyze template to see what tags Foxit detects
+      await this.debugTemplate();
+
       // Prepare data for template
       const templateData = this.prepareTemplateData(portfolioData);
       console.log('Template data prepared:', Object.keys(templateData));
@@ -519,6 +522,27 @@ export class FoxitService {
   }
 
   /**
+   * Debug method to analyze template and see what tags Foxit detects
+   */
+  async debugTemplate(): Promise<void> {
+    try {
+      // Get the template
+      const templateBase64 = await this.getStyleTemplate();
+
+      // Analyze the template to see what tags Foxit finds
+      const analysis = await this.analyzeTemplate(templateBase64);
+
+      console.log('=== FOXIT TEMPLATE ANALYSIS ===');
+      console.log('Single Tags Found:', analysis.singleTagsString);
+      console.log('Double Tags Found:', analysis.doubleTagsString);
+      console.log('===============================');
+
+    } catch (error) {
+      console.error('Template analysis failed:', error);
+    }
+  }
+
+  /**
    * Helper method to upload a base64 document
    */
   private async uploadGeneratedDocument(base64String: string): Promise<FoxitUploadResponse> {
@@ -535,7 +559,7 @@ export class FoxitService {
   }
 
   /**
- * Prepare data for document template - Fixed for simple Foxit merge fields
+ * Prepare data for document template - Reverted to string format
  */
   private prepareTemplateData(portfolioData: StylePortfolioData): Record<string, unknown> {
     const { userPreferences, products, metadata } = portfolioData;
@@ -546,7 +570,7 @@ export class FoxitService {
       userPreferences.lifestyle
     );
 
-    // Convert products to formatted text string
+    // Convert products to formatted text string (BACK TO ORIGINAL)
     const productList = products.slice(0, 10).map(product => {
       const title = product.title.length > 80
         ? product.title.substring(0, 77) + '...'
@@ -558,7 +582,7 @@ export class FoxitService {
   Price: ${price} | Category: ${category}`;
     }).join('\n\n');
 
-    // Convert styling tips to formatted text string
+    // Convert styling tips to formatted text string (BACK TO ORIGINAL)
     const stylingTipsList = stylingTips.map(tip => `- ${tip}`).join('\n\n');
 
     // Generate color palette as readable string
@@ -583,15 +607,15 @@ export class FoxitService {
       budget: userPreferences.budget || 'Flexible',
       personalStyle: userPreferences.personalStyle || userPreferences.aesthetics.join(' + '),
 
-      // Content as formatted strings (not arrays)
+      // Content as formatted strings (NOT arrays)
       productList: productList,
       stylingTipsList: stylingTipsList,
       colorPalette: colorPalette
     };
 
     console.log('Template data prepared with keys:', Object.keys(templateData));
-    console.log('Product list length:', productList.length);
-    console.log('Styling tips length:', stylingTipsList.length);
+    console.log('Product list preview:', productList.substring(0, 100) + '...');
+    console.log('Styling tips preview:', stylingTipsList.substring(0, 100) + '...');
 
     return templateData;
   }
