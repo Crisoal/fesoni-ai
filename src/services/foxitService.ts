@@ -25,539 +25,721 @@ export interface StylePortfolioData {
   };
 }
 
-interface DocumentTemplate {
-  templateType: 'style-guide' | 'lookbook' | 'seasonal-guide' | 'quick-reference';
-  title: string;
-  sections: string[];
-}
-
-interface FoxitDocumentResponse {
+interface FoxitUploadResponse {
   documentId: string;
-  downloadUrl: string;
-  status: 'success' | 'processing' | 'failed';
-  processingTime?: number;
+  message: string;
 }
 
-interface FoxitProcessingOptions {
-  compress?: boolean;
-  split?: boolean;
-  extractPages?: number[];
-  mergeWith?: string[];
-  convertToImages?: boolean;
-  optimizeForMobile?: boolean;
+interface FoxitTaskResponse {
+  taskId: string;
+  status: 'processing' | 'completed' | 'failed';
+  message: string;
+  downloadUrl?: string;
 }
 
-// Define the type for tip database
-type TipDatabase = {
-  [key: string]: string[];
-};
+interface FoxitDocumentGenerationResponse {
+  message: string;
+  fileExtension: string;
+  base64FileString: string;
+}
 
-// Define the type for color palettes
-type ColorPalettes = {
-  [key: string]: string[];
-};
+interface DocumentInfo {
+  documentId: string;
+  password?: string;
+}
 
-// Define the type for color map
-type ColorMap = {
-  [key: string]: string;
-};
+interface CombineConfig {
+  addBookmark?: boolean;
+  continueMergeOnError?: boolean;
+  retainPageNumbers?: boolean;
+  addToc?: boolean;
+  tocTitle?: string;
+}
+
+interface ExtractRequestBody {
+  documentId: string;
+  extractType: 'TEXT' | 'IMAGE' | 'PAGE';
+  pageRange?: string;
+}
+
+interface ImageConversionRequestBody {
+  documentId: string;
+  config: {
+    dpi: number;
+  };
+  pageRange?: string;
+}
 
 export class FoxitService {
-  private apiKey: string;
   private baseUrl: string;
-  private documentApiUrl: string;
+  private documentGenerationUrl: string;
   private pdfServicesUrl: string;
+  private clientId: string;
+  private clientSecret: string;
 
   constructor() {
-    this.apiKey = import.meta.env.VITE_FOXIT_API_KEY;
-    this.baseUrl = import.meta.env.VITE_FOXIT_BASE_URL || 'https://api.foxitsoftware.com';
-    this.documentApiUrl = `${this.baseUrl}/document-generation/v1`;
-    this.pdfServicesUrl = `${this.baseUrl}/pdf-services/v1`;
+    // Use proxy URLs in development, direct URLs in production
+    const isDevelopment = import.meta.env.DEV;
+
+    if (isDevelopment) {
+      // Use Vite proxy in development
+      this.documentGenerationUrl = '/api/foxit/document-generation';
+      this.pdfServicesUrl = '/api/foxit/pdf-services';
+      this.baseUrl = '/api/foxit'; // For backward compatibility
+    } else {
+      // Direct API calls in production (you'll need to handle CORS differently in production)
+      this.documentGenerationUrl = 'https://na1.fusion.foxit.com/document-generation';
+      this.pdfServicesUrl = 'https://na1.fusion.foxit.com/pdf-services';
+      this.baseUrl = 'https://na1.fusion.foxit.com';
+    }
+
+    this.clientId = import.meta.env.VITE_FOXIT_CLIENT_ID;
+    this.clientSecret = import.meta.env.VITE_FOXIT_CLIENT_SECRET;
   }
 
-  private get headers() {
+  private get authHeaders() {
+    const credentials = btoa(`${this.clientId}:${this.clientSecret}`);
     return {
-      'Authorization': `Bearer ${this.apiKey}`,
+      'Authorization': `Basic ${credentials}`,
       'Content-Type': 'application/json',
+      'client_id': this.clientId,
+      'client_secret': this.clientSecret,
+    };
+  }
+
+  private get uploadHeaders() {
+    const credentials = btoa(`${this.clientId}:${this.clientSecret}`);
+    return {
+      'Authorization': `Basic ${credentials}`,
+      'client_id': this.clientId,
+      'client_secret': this.clientSecret,
     };
   }
 
   /**
-   * Generate a comprehensive style portfolio document
+   * Upload a file to Foxit and get document ID
    */
-  async generateStylePortfolio(
-    portfolioData: StylePortfolioData,
-    templateType: DocumentTemplate['templateType'] = 'style-guide'
-  ): Promise<FoxitDocumentResponse> {
+  async uploadDocument(file: File | Blob, fileName: string = 'document.pdf'): Promise<FoxitUploadResponse> {
     try {
-      const template = this.getDocumentTemplate(templateType);
-      const documentContent = this.buildDocumentContent(portfolioData, template);
+      const formData = new FormData();
+      formData.append('file', file, fileName);
 
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/upload`, {
+        method: 'POST',
+        headers: this.uploadHeaders,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Upload response:', response.status, errorText);
+        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      return result;
+
+    } catch (error) {
+      console.error('Document upload error:', error);
+      throw new Error('Failed to upload document to Foxit');
+    }
+  }
+
+  /**
+ * Generate a document from template using Document Generation API
+ */
+  async generateDocumentFromTemplate(
+    templateBase64: string,
+    documentValues: Record<string, unknown>,
+    outputFormat: 'pdf' | 'docx' = 'pdf' // Changed to lowercase
+  ): Promise<FoxitDocumentGenerationResponse> {
+    try {
       const requestBody = {
-        template: {
-          type: templateType,
-          title: template.title,
-          branding: {
-            primaryColor: this.getStyleColor(portfolioData.userPreferences.aesthetics),
-            logoUrl: null, // Could add Fesoni branding
-            theme: this.getDocumentTheme(portfolioData.userPreferences.aesthetics)
-          }
-        },
-        content: documentContent,
-        options: {
-          format: 'pdf',
-          quality: 'high',
-          includeImages: true,
-          generateThumbnails: true
-        }
+        documentValues,
+        base64FileString: templateBase64,
+        outputFormat, // This will now be lowercase 'pdf' or 'docx'
+        currencyCulture: 'en-US'
       };
 
-      const response = await fetch(`${this.documentApiUrl}/generate`, {
+      console.log('Making document generation request to:', `${this.documentGenerationUrl}/api/GenerateDocumentBase64`);
+
+      const response = await fetch(`${this.documentGenerationUrl}/api/GenerateDocumentBase64`, {
         method: 'POST',
-        headers: this.headers,
+        headers: this.authHeaders,
         body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
-        throw new Error(`Foxit Document Generation error: ${response.status}`);
+        const errorText = await response.text();
+        console.error('Document generation response:', response.status, errorText);
+        throw new Error(`Document generation failed: ${response.status} ${response.statusText}`);
       }
 
-      const result = await response.json();
-      
-      return {
-        documentId: result.documentId,
-        downloadUrl: result.downloadUrl,
-        status: result.status || 'success',
-        processingTime: result.processingTime
-      };
+      return await response.json();
 
     } catch (error) {
-      console.error('Foxit document generation error:', error);
-      throw new Error('Failed to generate style portfolio');
+      console.error('Document generation error:', error);
+      throw new Error('Failed to generate document from template');
     }
   }
 
   /**
-   * Process and optimize generated documents
+   * Analyze a template document to extract tags
    */
-  async processDocument(
+  async analyzeTemplate(templateBase64: string): Promise<{
+    singleTagsString: string[];
+    doubleTagsString: string[];
+  }> {
+    try {
+      const response = await fetch(`${this.documentGenerationUrl}/api/AnalyzeDocumentBase64`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify({
+          base64FileString: templateBase64
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Template analysis response:', response.status, errorText);
+        throw new Error(`Template analysis failed: ${response.status}`);
+      }
+
+      return await response.json();
+
+    } catch (error) {
+      console.error('Template analysis error:', error);
+      throw new Error('Failed to analyze template');
+    }
+  }
+
+  /**
+   * Compress a PDF document
+   */
+  async compressDocument(
     documentId: string,
-    options: FoxitProcessingOptions = {}
-  ): Promise<{
-    processedDocuments: Array<{
-      type: string;
-      downloadUrl: string;
-      size?: number;
-    }>;
-  }> {
+    compressionLevel: 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW'
+  ): Promise<FoxitTaskResponse> {
     try {
-      const processingTasks = [];
-
-      // Compression for mobile sharing
-      if (options.compress || options.optimizeForMobile) {
-        processingTasks.push(this.compressDocument(documentId, options.optimizeForMobile));
-      }
-
-      // Split document into sections
-      if (options.split) {
-        processingTasks.push(this.splitDocument(documentId));
-      }
-
-      // Extract specific pages
-      if (options.extractPages && options.extractPages.length > 0) {
-        processingTasks.push(this.extractPages(documentId, options.extractPages));
-      }
-
-      // Convert to images for social sharing
-      if (options.convertToImages) {
-        processingTasks.push(this.convertToImages(documentId));
-      }
-
-      // Merge with additional content
-      if (options.mergeWith && options.mergeWith.length > 0) {
-        processingTasks.push(this.mergeDocuments(documentId, options.mergeWith));
-      }
-
-      const results = await Promise.allSettled(processingTasks);
-      const processedDocuments: Array<{
-        type: string;
-        downloadUrl: string;
-        size?: number;
-      }> = [];
-      
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          const value = result.value;
-          if (Array.isArray(value)) {
-            processedDocuments.push(...value);
-          } else {
-            processedDocuments.push(value);
-          }
-        }
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/modify/pdf-compress`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify({
+          documentId,
+          compressionLevel
+        }),
       });
 
-      return { processedDocuments };
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Compression response:', response.status, errorText);
+        throw new Error(`Compression failed: ${response.status}`);
+      }
+
+      return await response.json();
 
     } catch (error) {
-      console.error('Foxit document processing error:', error);
-      throw new Error('Failed to process document');
+      console.error('Document compression error:', error);
+      throw new Error('Failed to compress document');
     }
   }
 
   /**
-   * Create a complete style package workflow
+   * Split a PDF document into multiple files
    */
-  async createCompleteStylePackage(portfolioData: StylePortfolioData): Promise<{
-    mainDocument: FoxitDocumentResponse;
-    processedDocuments: Array<{
+  async splitDocument(documentId: string, pageCount: number): Promise<FoxitTaskResponse> {
+    try {
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/modify/pdf-split`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify({
+          documentId,
+          pageCount
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Document split response:', response.status, errorText);
+        throw new Error(`Document split failed: ${response.status}`);
+      }
+
+      return await response.json();
+
+    } catch (error) {
+      console.error('Document split error:', error);
+      throw new Error('Failed to split document');
+    }
+  }
+
+  /**
+   * Extract content from PDF (text, images, or pages)
+   */
+  async extractFromDocument(
+    documentId: string,
+    extractType: 'TEXT' | 'IMAGE' | 'PAGE',
+    pageRange?: string
+  ): Promise<FoxitTaskResponse> {
+    try {
+      const requestBody: ExtractRequestBody = {
+        documentId,
+        extractType
+      };
+
+      if (pageRange) {
+        requestBody.pageRange = pageRange;
+      }
+
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/modify/pdf-extract`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Extraction response:', response.status, errorText);
+        throw new Error(`Extraction failed: ${response.status}`);
+      }
+
+      return await response.json();
+
+    } catch (error) {
+      console.error('Document extraction error:', error);
+      throw new Error('Failed to extract from document');
+    }
+  }
+
+  /**
+   * Convert PDF pages to images
+   */
+  async convertToImages(
+    documentId: string,
+    pageRange?: string,
+    dpi: number = 150
+  ): Promise<FoxitTaskResponse> {
+    try {
+      const requestBody: ImageConversionRequestBody = {
+        documentId,
+        config: {
+          dpi
+        }
+      };
+
+      if (pageRange) {
+        requestBody.pageRange = pageRange;
+      }
+
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/convert/pdf-to-image`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Image conversion response:', response.status, errorText);
+        throw new Error(`Image conversion failed: ${response.status}`);
+      }
+
+      return await response.json();
+
+    } catch (error) {
+      console.error('Image conversion error:', error);
+      throw new Error('Failed to convert to images');
+    }
+  }
+
+  /**
+   * Combine multiple PDF documents
+   */
+  async combineDocuments(
+    documentIds: string[],
+    config?: CombineConfig
+  ): Promise<FoxitTaskResponse> {
+    try {
+      const documentInfos: DocumentInfo[] = documentIds.map(id => ({
+        documentId: id,
+        password: '' // Empty for unsecured documents
+      }));
+
+      const response = await fetch(`${this.pdfServicesUrl}/api/documents/enhance/pdf-combine`, {
+        method: 'POST',
+        headers: this.authHeaders,
+        body: JSON.stringify({
+          documentInfos,
+          config: config || {
+            addBookmark: true,
+            continueMergeOnError: true,
+            retainPageNumbers: false
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Document combine response:', response.status, errorText);
+        throw new Error(`Document combine failed: ${response.status}`);
+      }
+
+      return await response.json();
+
+    } catch (error) {
+      console.error('Document combine error:', error);
+      throw new Error('Failed to combine documents');
+    }
+  }
+
+  /**
+   * Download a document by its ID
+   */
+  async downloadDocument(documentId: string, filename?: string): Promise<Blob> {
+    try {
+      const url = new URL(`${this.pdfServicesUrl}/api/documents/${documentId}/download`);
+      if (filename) {
+        url.searchParams.set('filename', filename);
+      }
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'client_id': this.clientId,
+          'client_secret': this.clientSecret,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Download response:', response.status, errorText);
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      return await response.blob();
+
+    } catch (error) {
+      console.error('Document download error:', error);
+      throw new Error('Failed to download document');
+    }
+  }
+
+  /**
+ * Create a style portfolio workflow using templates
+ */
+  async createStylePortfolio(portfolioData: StylePortfolioData): Promise<{
+    mainDocument: string; // base64 string
+    documentId?: string;
+    processedVersions: Array<{
       type: string;
-      downloadUrl: string;
-      size?: number;
+      taskId: string;
     }>;
-    quickReference: FoxitDocumentResponse;
   }> {
     try {
-      // Generate main style guide
-      const mainDocument = await this.generateStylePortfolio(portfolioData, 'style-guide');
-      
-      // Generate quick reference guide
-      const quickReferenceData = {
-        ...portfolioData,
-        products: portfolioData.products.slice(0, 6) // Limit to top picks
-      };
-      const quickReference = await this.generateStylePortfolio(
-        quickReferenceData, 
-        'quick-reference'
+      console.log('Creating style portfolio...');
+
+      // Get the template
+      const templateBase64 = await this.getStyleTemplate();
+      console.log('Template loaded successfully');
+
+      // Prepare data for template
+      const templateData = this.prepareTemplateData(portfolioData);
+      console.log('Template data prepared:', Object.keys(templateData));
+
+      // Generate main document with lowercase format
+      const generatedDoc = await this.generateDocumentFromTemplate(
+        templateBase64,
+        templateData,
+        'pdf' // Changed to lowercase
       );
+      console.log('Document generated successfully');
 
-      // Process main document with multiple optimizations
-      const processedResults = await this.processDocument(mainDocument.documentId, {
-        compress: true,
-        optimizeForMobile: true,
-        extractPages: [1, 2], // Extract cover and summary pages
-        convertToImages: true,
-        split: true
-      });
-
-      return {
-        mainDocument,
-        processedDocuments: processedResults.processedDocuments,
-        quickReference
+      // Initialize result with main document
+      const result: {
+        mainDocument: string;
+        documentId?: string;
+        processedVersions: Array<{ type: string; taskId: string }>;
+      } = {
+        mainDocument: generatedDoc.base64FileString,
+        processedVersions: []
       };
 
-    } catch (error) {
-      console.error('Complete style package creation error:', error);
-      throw new Error('Failed to create complete style package');
-    }
-  }
+      // Try to upload for additional processing (optional)
+      try {
+        const uploadedDoc = await this.uploadGeneratedDocument(generatedDoc.base64FileString);
+        console.log('Document uploaded for processing:', uploadedDoc.documentId);
 
-  /**
-   * Compress document for mobile and web sharing
-   */
-  private async compressDocument(documentId: string, optimizeForMobile: boolean = false): Promise<{
-    type: string;
-    downloadUrl: string;
-    size: number;
-  }> {
-    const compressionLevel = optimizeForMobile ? 'high' : 'medium';
-    
-    const response = await fetch(`${this.pdfServicesUrl}/compress`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        documentId,
-        options: {
-          compressionLevel,
-          optimizeForWeb: true,
-          maintainQuality: !optimizeForMobile
-        }
-      }),
-    });
+        result.documentId = uploadedDoc.documentId;
 
-    if (!response.ok) {
-      throw new Error(`Compression failed: ${response.status}`);
-    }
+        // Create processed versions (non-blocking)
+        const processingPromises = [];
 
-    const result = await response.json();
-    return {
-      type: optimizeForMobile ? 'mobile-optimized' : 'compressed',
-      downloadUrl: result.downloadUrl,
-      size: result.fileSize
-    };
-  }
+        // Compressed version
+        processingPromises.push(
+          this.compressDocument(uploadedDoc.documentId, 'MEDIUM')
+            .then(task => ({ type: 'compressed', taskId: task.taskId }))
+            .catch(error => {
+              console.warn('Compression task failed:', error);
+              return null;
+            })
+        );
 
-  /**
-   * Split document into focused sections
-   */
-  private async splitDocument(documentId: string): Promise<Array<{
-    type: string;
-    downloadUrl: string;
-  }>> {
-    const response = await fetch(`${this.pdfServicesUrl}/split`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        documentId,
-        splitOptions: {
-          splitBy: 'section',
-          preserveBookmarks: true
-        }
-      }),
-    });
+        // Convert to images for social sharing
+        processingPromises.push(
+          this.convertToImages(uploadedDoc.documentId, '1-3', 200)
+            .then(task => ({ type: 'social-images', taskId: task.taskId }))
+            .catch(error => {
+              console.warn('Image conversion task failed:', error);
+              return null;
+            })
+        );
 
-    if (!response.ok) {
-      throw new Error(`Document split failed: ${response.status}`);
-    }
+        // Extract key pages
+        processingPromises.push(
+          this.extractFromDocument(uploadedDoc.documentId, 'PAGE', '1,2')
+            .then(task => ({ type: 'quick-reference', taskId: task.taskId }))
+            .catch(error => {
+              console.warn('Page extraction task failed:', error);
+              return null;
+            })
+        );
 
-    const result = await response.json();
-    return result.documents.map((doc: { downloadUrl: string }, index: number) => ({
-      type: `section-${index + 1}`,
-      downloadUrl: doc.downloadUrl
-    }));
-  }
+        const processedResults = await Promise.all(processingPromises);
+        result.processedVersions = processedResults.filter(Boolean) as Array<{ type: string; taskId: string }>;
 
-  /**
-   * Extract specific pages for quick reference
-   */
-  private async extractPages(documentId: string, pages: number[]): Promise<{
-    type: string;
-    downloadUrl: string;
-  }> {
-    const response = await fetch(`${this.pdfServicesUrl}/extract-pages`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        documentId,
-        pages: pages
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Page extraction failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return {
-      type: 'quick-reference-pages',
-      downloadUrl: result.downloadUrl
-    };
-  }
-
-  /**
-   * Convert document pages to images for social sharing
-   */
-  private async convertToImages(documentId: string): Promise<Array<{
-    type: string;
-    downloadUrl: string;
-  }>> {
-    const response = await fetch(`${this.pdfServicesUrl}/convert-to-images`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        documentId,
-        options: {
-          format: 'png',
-          resolution: 300,
-          maxPages: 3 // Limit for social sharing
-        }
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Image conversion failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return result.images.map((img: { downloadUrl: string }, index: number) => ({
-      type: `social-image-${index + 1}`,
-      downloadUrl: img.downloadUrl
-    }));
-  }
-
-  /**
-   * Merge documents for comprehensive packages
-   */
-  private async mergeDocuments(documentId: string, additionalDocumentIds: string[]): Promise<{
-    type: string;
-    downloadUrl: string;
-  }> {
-    const response = await fetch(`${this.pdfServicesUrl}/merge`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        documentIds: [documentId, ...additionalDocumentIds],
-        options: {
-          preserveBookmarks: true,
-          addPageNumbers: true
-        }
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Document merge failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return {
-      type: 'merged-comprehensive-guide',
-      downloadUrl: result.downloadUrl
-    };
-  }
-
-  /**
-   * Build document content from portfolio data
-   */
-  private buildDocumentContent(data: StylePortfolioData, template: DocumentTemplate) {
-    const { userPreferences, products, metadata } = data;
-
-    return {
-      title: template.title,
-      subtitle: `Curated by Fesoni for ${metadata.userName || 'You'}`,
-      sections: [
-        {
-          type: 'cover',
-          title: template.title,
-          subtitle: `Your personalized ${userPreferences.lifestyle} style guide`,
-          date: metadata.createdDate
-        },
-        {
-          type: 'style-summary',
-          title: 'Your Style Profile',
-          content: {
-            aesthetics: userPreferences.aesthetics,
-            lifestyle: userPreferences.lifestyle,
-            budget: userPreferences.budget,
-            keyWords: [...userPreferences.aesthetics, userPreferences.lifestyle]
-          }
-        },
-        {
-          type: 'product-showcase',
-          title: 'Curated Products',
-          products: products.map(product => ({
-            name: product.title,
-            price: product.price,
-            image: product.image,
-            url: product.url,
-            category: product.category || 'Fashion'
-          }))
-        },
-        {
-          type: 'styling-tips',
-          title: 'How to Style',
-          tips: this.generateStylingTips(userPreferences.aesthetics, userPreferences.lifestyle)
-        },
-        {
-          type: 'color-palette',
-          title: 'Your Color Palette',
-          colors: this.generateColorPalette(userPreferences.aesthetics)
-        }
-      ]
-    };
-  }
-
-  /**
-   * Get document template configuration
-   */
-  private getDocumentTemplate(templateType: DocumentTemplate['templateType']): DocumentTemplate {
-    const templates = {
-      'style-guide': {
-        templateType: 'style-guide' as const,
-        title: 'Personal Style Guide',
-        sections: ['cover', 'style-summary', 'product-showcase', 'styling-tips', 'color-palette']
-      },
-      'lookbook': {
-        templateType: 'lookbook' as const,
-        title: 'Style Lookbook',
-        sections: ['cover', 'outfit-combinations', 'product-showcase', 'inspiration']
-      },
-      'seasonal-guide': {
-        templateType: 'seasonal-guide' as const,
-        title: 'Seasonal Style Guide',
-        sections: ['cover', 'seasonal-trends', 'product-showcase', 'transition-pieces']
-      },
-      'quick-reference': {
-        templateType: 'quick-reference' as const,
-        title: 'Style Quick Reference',
-        sections: ['essentials', 'top-picks', 'color-guide']
+      } catch (uploadError) {
+        console.warn('Document upload failed, but main document is available:', uploadError);
+        // Continue without processed versions
       }
-    };
 
-    return templates[templateType];
+      return result;
+
+    } catch (error) {
+      console.error('Style portfolio creation error:', error);
+      throw new Error(`Failed to create style portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   /**
-   * Generate styling tips based on aesthetic preferences
+   * Helper method to upload a base64 document
    */
+  private async uploadGeneratedDocument(base64String: string): Promise<FoxitUploadResponse> {
+    // Convert base64 to blob
+    const byteCharacters = atob(base64String);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'application/pdf' });
+
+    return this.uploadDocument(blob, 'generated-style-guide.pdf');
+  }
+
+  /**
+ * Prepare data for document template - Fixed for simple Foxit merge fields
+ */
+  private prepareTemplateData(portfolioData: StylePortfolioData): Record<string, unknown> {
+    const { userPreferences, products, metadata } = portfolioData;
+
+    // Generate styling tips as formatted string instead of array
+    const stylingTips = this.generateStylingTips(
+      userPreferences.aesthetics,
+      userPreferences.lifestyle
+    );
+
+    // Convert products to formatted text string
+    const productList = products.slice(0, 10).map(product => {
+      const title = product.title.length > 80
+        ? product.title.substring(0, 77) + '...'
+        : product.title;
+      const price = product.price ? `$${product.price.toFixed(2)}` : 'Price varies';
+      const category = product.category || 'Fashion';
+
+      return `- ${title}
+  Price: ${price} | Category: ${category}`;
+    }).join('\n\n');
+
+    // Convert styling tips to formatted text string
+    const stylingTipsList = stylingTips.map(tip => `- ${tip}`).join('\n\n');
+
+    // Generate color palette as readable string
+    const colorPalette = this.generateColorPalette(userPreferences.aesthetics)
+      .slice(0, 6)
+      .join(' • ');
+
+    const templateData = {
+      // User info - simple strings only
+      userName: metadata.userName || 'Style Enthusiast',
+      createdDate: new Date(metadata.createdDate).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }),
+      season: metadata.season || 'Current Season',
+      occasion: metadata.occasion || userPreferences.lifestyle || 'General',
+
+      // Style preferences as simple strings
+      aesthetics: userPreferences.aesthetics.join(' + '),
+      lifestyle: userPreferences.lifestyle,
+      budget: userPreferences.budget || 'Flexible',
+      personalStyle: userPreferences.personalStyle || userPreferences.aesthetics.join(' + '),
+
+      // Content as formatted strings (not arrays)
+      productList: productList,
+      stylingTipsList: stylingTipsList,
+      colorPalette: colorPalette
+    };
+
+    console.log('Template data prepared with keys:', Object.keys(templateData));
+    console.log('Product list length:', productList.length);
+    console.log('Styling tips length:', stylingTipsList.length);
+
+    return templateData;
+  }
+
+  /**
+ * Get style template - loads pre-designed Word template as base64
+ */
+  private async getStyleTemplate(): Promise<string> {
+    try {
+      console.log('Loading Word template from assets...');
+      const response = await fetch('/assets/templates/style-guide-template.docx');
+
+      if (!response.ok) {
+        throw new Error(`Template file not found: ${response.status} ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      console.log('Successfully loaded Word template from assets');
+      return base64;
+
+    } catch (error) {
+      console.error('Failed to load template from assets:', error);
+
+      // Fallback to environment variable
+      const templateFromEnv = import.meta.env.VITE_STYLE_TEMPLATE_BASE64;
+      if (templateFromEnv) {
+        console.log('Using template from environment variable');
+        return templateFromEnv;
+      }
+
+      // Final error if no template is available
+      throw new Error(`
+      Template Loading Failed: Could not load style-guide-template.docx
+      
+      Please ensure:
+      1. File exists at: public/assets/templates/style-guide-template.docx
+      2. File is a valid Word document with Foxit text tags
+      3. Development server has access to the public folder
+      
+      Error details: ${error instanceof Error ? error.message : 'Unknown error'}
+    `);
+    }
+  }
+
+  /**
+ * Generate styling tips based on aesthetic preferences - Enhanced
+ */
   private generateStylingTips(aesthetics: string[], lifestyle: string): string[] {
-    const tipDatabase: TipDatabase = {
-      minimalist: ['Focus on clean lines and neutral colors', 'Invest in quality basics', 'Less is more - choose versatile pieces'],
-      cottagecore: ['Layer delicate fabrics', 'Embrace floral patterns', 'Mix vintage with modern pieces'],
-      'dark academia': ['Layer blazers over sweaters', 'Incorporate rich textures', 'Focus on earth tones and deep colors'],
-      casual: ['Prioritize comfort and flexibility', 'Mix and match basics', 'Add personality with accessories'],
-      professional: ['Invest in tailored pieces', 'Stick to classic cuts', 'Pay attention to fit and details']
+    const tipDatabase: { [key: string]: string[] } = {
+      minimalist: [
+        'Focus on clean lines and neutral colors',
+        'Invest in quality basics that mix and match',
+        'Choose pieces with simple, elegant silhouettes',
+        'Less is more - select versatile, timeless items'
+      ],
+      cottagecore: [
+        'Layer delicate fabrics and textures',
+        'Embrace floral patterns and earthy tones',
+        'Mix vintage pieces with modern comfort',
+        'Choose natural fabrics like cotton and linen'
+      ],
+      'dark academia': [
+        'Layer blazers over comfortable sweaters',
+        'Incorporate rich textures like wool and tweed',
+        'Focus on earth tones and deep, scholarly colors',
+        'Add vintage accessories for authentic appeal'
+      ],
+      sleek: [
+        'Choose streamlined silhouettes and modern cuts',
+        'Stick to a cohesive color palette',
+        'Invest in quality materials with smooth finishes',
+        'Keep accessories minimal and functional'
+      ],
+      cute: [
+        'Add playful details and soft textures',
+        'Mix feminine touches with practical pieces',
+        'Use pastel colors and gentle patterns',
+        'Choose comfortable fits that flatter your shape'
+      ],
+      casual: [
+        'Prioritize comfort without sacrificing style',
+        'Mix and match versatile basics',
+        'Add personality with fun accessories',
+        'Choose breathable, easy-care fabrics'
+      ],
+      professional: [
+        'Invest in well-tailored, classic pieces',
+        'Stick to sophisticated color combinations',
+        'Pay attention to fit and quality details',
+        'Choose versatile pieces that work for multiple occasions'
+      ]
     };
 
     const tips: string[] = [];
+
+    // Add aesthetic-specific tips
     aesthetics.forEach(aesthetic => {
-      if (tipDatabase[aesthetic]) {
-        tips.push(...tipDatabase[aesthetic]);
+      const aestheticKey = aesthetic.toLowerCase();
+      if (tipDatabase[aestheticKey]) {
+        tips.push(...tipDatabase[aestheticKey].slice(0, 2)); // Max 2 tips per aesthetic
       }
     });
 
-    if (tipDatabase[lifestyle]) {
-      tips.push(...tipDatabase[lifestyle]);
+    // Add lifestyle-specific tips
+    const lifestyleKey = lifestyle.toLowerCase();
+    if (tipDatabase[lifestyleKey]) {
+      tips.push(...tipDatabase[lifestyleKey].slice(0, 2));
     }
 
-    return tips.slice(0, 6); // Limit to 6 tips
+    // Generic styling tips if no specific ones found
+    if (tips.length === 0) {
+      tips.push(
+        'Choose pieces that reflect your personal style',
+        'Invest in quality over quantity',
+        'Mix textures and patterns thoughtfully',
+        'Ensure proper fit for the most flattering look'
+      );
+    }
+
+    // Return max 6 tips to avoid overwhelming the document
+    return [...new Set(tips)].slice(0, 6);
   }
 
   /**
-   * Generate color palette based on aesthetics
-   */
+ * Generate color palette based on aesthetics - Enhanced
+ */
   private generateColorPalette(aesthetics: string[]): string[] {
-    const colorPalettes: ColorPalettes = {
-      minimalist: ['#FFFFFF', '#F5F5F5', '#E0E0E0', '#9E9E9E', '#424242', '#212121'],
-      cottagecore: ['#F8F6F0', '#E8DCC6', '#C8AD7F', '#8B7355', '#6B5B73', '#A0522D'],
-      'dark academia': ['#2F1B14', '#8B4513', '#CD853F', '#F4A460', '#DEB887', '#D2B48C'],
-      bohemian: ['#D4A574', '#C19A6B', '#8B7355', '#6B4423', '#A0522D', '#CD853F'],
-      modern: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD']
+    const colorPalettes: { [key: string]: string[] } = {
+      minimalist: ['White', 'Light Gray', 'Charcoal', 'Black', 'Beige', 'Navy'],
+      cottagecore: ['Cream', 'Sage Green', 'Dusty Rose', 'Warm Brown', 'Lavender', 'Soft Yellow'],
+      'dark academia': ['Deep Brown', 'Forest Green', 'Burgundy', 'Cream', 'Navy', 'Charcoal'],
+      sleek: ['Black', 'White', 'Silver', 'Deep Navy', 'Charcoal', 'Cool Gray'],
+      cute: ['Soft Pink', 'Lavender', 'Mint Green', 'Cream', 'Peach', 'Light Blue'],
+      bohemian: ['Terracotta', 'Mustard', 'Deep Teal', 'Rust', 'Sage', 'Cream'],
+      modern: ['Black', 'White', 'Bold Red', 'Electric Blue', 'Bright Yellow', 'Deep Purple']
     };
 
-    let palette = ['#000000', '#FFFFFF', '#808080']; // Default colors
-    
+    let palette = ['Black', 'White', 'Gray']; // Base neutral palette
+
     aesthetics.forEach(aesthetic => {
-      if (colorPalettes[aesthetic]) {
-        palette = [...palette, ...colorPalettes[aesthetic]];
+      const aestheticKey = aesthetic.toLowerCase();
+      if (colorPalettes[aestheticKey]) {
+        palette = [...palette, ...colorPalettes[aestheticKey]];
       }
     });
 
-    return [...new Set(palette)].slice(0, 8); // Remove duplicates and limit to 8 colors
-  }
-
-  /**
-   * Get primary color for document theming
-   */
-  private getStyleColor(aesthetics: string[]): string {
-    const colorMap: ColorMap = {
-      minimalist: '#2C3E50',
-      cottagecore: '#8B7355',
-      'dark academia': '#8B4513',
-      bohemian: '#D4A574',
-      modern: '#4ECDC4',
-      professional: '#2C3E50'
-    };
-
-    return colorMap[aesthetics[0]] || '#2C3E50';
-  }
-
-  /**
-   * Get document theme based on aesthetics
-   */
-  private getDocumentTheme(aesthetics: string[]): string {
-    if (aesthetics.includes('minimalist')) return 'clean';
-    if (aesthetics.includes('cottagecore')) return 'vintage';
-    if (aesthetics.includes('dark academia')) return 'classic';
-    if (aesthetics.includes('modern')) return 'contemporary';
-    return 'elegant';
+    // Remove duplicates and return unique colors
+    return [...new Set(palette)].slice(0, 8);
   }
 }
