@@ -1,3 +1,5 @@
+// src/components/ProductCard.tsx
+
 import React from 'react';
 import { Star, Timer as Prime, ExternalLink, ShoppingBag } from 'lucide-react';
 
@@ -12,6 +14,7 @@ interface Product {
   reviews: number;
   prime: boolean;
   delivery_message: string;
+  category?: string; // Added category field
 }
 
 interface ProductCardProps {
@@ -61,7 +64,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   return (
     <div className="bg-gray-800/50 dark:bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 
                     rounded-xl overflow-hidden hover:border-purple-500/30 transition-all duration-300 
-                    hover:shadow-lg hover:shadow-purple-500/10 group">
+                    hover:shadow-lg hover:shadow-purple-500/10 group min-w-[220px] w-[220px] flex-shrink-0">
       
       {/* Image */}
       <div className="relative overflow-hidden h-48 bg-gray-900">
@@ -93,6 +96,15 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
       {/* Content */}
       <div className="p-4 space-y-3">
+        {/* Category */}
+        {product.category && (
+          <div className="flex items-center justify-between">
+            <span className="bg-purple-500/20 text-purple-300 text-xs font-medium px-2 py-1 rounded-full">
+              {product.category}
+            </span>
+          </div>
+        )}
+
         <h3 className="text-white font-medium text-sm leading-snug line-clamp-2">
           {product.title}
         </h3>

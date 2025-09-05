@@ -11,6 +11,10 @@ export interface AmazonProduct {
   prime: boolean;
   delivery_message: string;
   variations: unknown[];
+  category?: string;
+  brand?: string;
+  manufacturer?: string;
+  categories?: string[];
 }
 
 // Define types for the Amazon API response structures
@@ -26,6 +30,8 @@ interface SearchProductDetail {
   prime?: boolean;
   deliveryMessage?: string;
   variations?: unknown[];
+  categories?: string[];
+  manufacturer?: string;
 }
 
 interface DetailedProductData {
@@ -41,6 +47,13 @@ interface DetailedProductData {
   prime?: boolean;
   priceShippingInformation?: string;
   variations?: unknown[];
+  categories?: string[];
+  manufacturer?: string;
+  brand?: string;
+  productDetails?: Array<{
+    name?: string;
+    value?: string;
+  }>;
 }
 
 export class AmazonService {
@@ -139,6 +152,12 @@ export class AmazonService {
     const dpUrl = productDetail.dpUrl || '';
     const fullUrl = dpUrl ? `https://amazon.com${dpUrl}` : '';
 
+    // Infer category from product description and categories
+    const category = this.determineProductCategory(
+      productDetail.productDescription || '',
+      productDetail.categories || []
+    );
+
     return {
       product_id: productDetail.asin || '',
       title: productDetail.productDescription || '',
@@ -151,11 +170,27 @@ export class AmazonService {
       prime: productDetail.prime || false,
       delivery_message: productDetail.deliveryMessage || '',
       variations: productDetail.variations || [],
+      category,
+      manufacturer: productDetail.manufacturer || '',
+      categories: productDetail.categories || [],
     };
   }
 
   private formatDetailedProduct(productData: DetailedProductData): AmazonProduct {
     const rating = this.parseRating(productData.productRating);
+
+    // Extract brand from product details
+    const productDetails = productData.productDetails || [];
+    const brandDetail = productDetails.find(detail => 
+      detail.name?.toLowerCase() === 'brand'
+    );
+    const brand = brandDetail?.value || productData.brand || '';
+
+    // Determine category from product title and categories
+    const category = this.determineProductCategory(
+      productData.productTitle || '',
+      productData.categories || []
+    );
 
     return {
       product_id: productData.asin || '',
@@ -169,6 +204,10 @@ export class AmazonService {
       prime: productData.prime || false,
       delivery_message: productData.priceShippingInformation || '',
       variations: productData.variations || [],
+      category,
+      brand,
+      manufacturer: productData.manufacturer || '',
+      categories: productData.categories || [],
     };
   }
 
@@ -180,5 +219,106 @@ export class AmazonService {
     } catch {
       return 0;
     }
+  }
+
+  private determineProductCategory(title: string, categories: string[]): string {
+    const lowerTitle = title.toLowerCase();
+
+    // First check if we have explicit categories from the API
+    if (categories && categories.length > 0) {
+      const firstCategory = categories[0];
+      
+      // Map common Amazon categories to our simplified categories
+      const categoryMappings: { [key: string]: string } = {
+        'clothing': 'Clothing',
+        'shoes': 'Footwear',
+        'jewelry': 'Accessories',
+        'bags': 'Accessories',
+        'handbags': 'Accessories',
+        'watches': 'Accessories',
+        'beauty': 'Beauty',
+        'home': 'Home Decor',
+        'kitchen': 'Home Decor',
+        'electronics': 'Electronics',
+        'sports': 'Sports & Outdoors',
+        'books': 'Books',
+        'toys': 'Toys & Games',
+        'automotive': 'Automotive',
+        'health': 'Health & Personal Care',
+      };
+
+      for (const [key, value] of Object.entries(categoryMappings)) {
+        if (firstCategory.toLowerCase().includes(key)) {
+          return value;
+        }
+      }
+    }
+
+    // Fallback to title-based inference
+    if (lowerTitle.includes('dress') || lowerTitle.includes('shirt') || 
+        lowerTitle.includes('top') || lowerTitle.includes('pants') || 
+        lowerTitle.includes('jeans') || lowerTitle.includes('jacket') ||
+        lowerTitle.includes('sweater') || lowerTitle.includes('coat')) {
+      return 'Clothing';
+    }
+    
+    if (lowerTitle.includes('shoe') || lowerTitle.includes('boot') || 
+        lowerTitle.includes('sandal') || lowerTitle.includes('sneaker') ||
+        lowerTitle.includes('heel') || lowerTitle.includes('flat')) {
+      return 'Footwear';
+    }
+    
+    if (lowerTitle.includes('bag') || lowerTitle.includes('purse') || 
+        lowerTitle.includes('wallet') || lowerTitle.includes('jewelry') || 
+        lowerTitle.includes('watch') || lowerTitle.includes('necklace') ||
+        lowerTitle.includes('earring') || lowerTitle.includes('bracelet') ||
+        lowerTitle.includes('ring') || lowerTitle.includes('sunglasses')) {
+      return 'Accessories';
+    }
+    
+    if (lowerTitle.includes('makeup') || lowerTitle.includes('skincare') || 
+        lowerTitle.includes('perfume') || lowerTitle.includes('cologne') ||
+        lowerTitle.includes('beauty') || lowerTitle.includes('cosmetic')) {
+      return 'Beauty';
+    }
+    
+    if (lowerTitle.includes('home') || lowerTitle.includes('decor') || 
+        lowerTitle.includes('lamp') || lowerTitle.includes('furniture') ||
+        lowerTitle.includes('pillow') || lowerTitle.includes('blanket') ||
+        lowerTitle.includes('kitchen') || lowerTitle.includes('dining')) {
+      return 'Home Decor';
+    }
+
+    if (lowerTitle.includes('phone') || lowerTitle.includes('tablet') || 
+        lowerTitle.includes('laptop') || lowerTitle.includes('computer') ||
+        lowerTitle.includes('headphones') || lowerTitle.includes('speaker') ||
+        lowerTitle.includes('camera') || lowerTitle.includes('electronic')) {
+      return 'Electronics';
+    }
+
+    if (lowerTitle.includes('book') || lowerTitle.includes('novel') || 
+        lowerTitle.includes('guide') || lowerTitle.includes('magazine')) {
+      return 'Books';
+    }
+
+    if (lowerTitle.includes('toy') || lowerTitle.includes('game') || 
+        lowerTitle.includes('puzzle') || lowerTitle.includes('doll')) {
+      return 'Toys & Games';
+    }
+
+    if (lowerTitle.includes('sport') || lowerTitle.includes('fitness') || 
+        lowerTitle.includes('outdoor') || lowerTitle.includes('exercise') ||
+        lowerTitle.includes('gym') || lowerTitle.includes('yoga')) {
+      return 'Sports & Outdoors';
+    }
+
+    if (lowerTitle.includes('vitamin') || lowerTitle.includes('supplement') || 
+        lowerTitle.includes('health') || lowerTitle.includes('medical') ||
+        lowerTitle.includes('personal care')) {
+      return 'Health & Personal Care';
+    }
+
+    // Default fallback
+    return 'Fashion';
   }
 }

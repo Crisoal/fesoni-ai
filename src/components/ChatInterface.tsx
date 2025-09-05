@@ -30,14 +30,8 @@ interface Message {
 }
 
 const ChatInterface: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "Hi! I'm Fesoni, your AI shopping assistant. I'm here to understand your unique style and help you discover products that match your vibe. I'll also create personalized style documentation for you! Tell me about your style preferences, what you're looking for, or describe the aesthetic you're going for!",
-      timestamp: new Date(),
-    }
-  ]);
+  // Removed the default welcome message from initial state
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingDocuments, setIsGeneratingDocuments] = useState(false);
@@ -452,6 +446,17 @@ const ChatInterface: React.FC = () => {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         <div className="max-w-4xl mx-auto space-y-6">
+          {/* Display welcome message only when there are no messages */}
+          {messages.length === 0 && (
+            <div className="flex justify-start">
+              <div className="max-w-2xl p-4 rounded-2xl bg-gray-900 text-gray-100 mr-12 border border-gray-800">
+                <p className="whitespace-pre-wrap leading-relaxed">
+                  Hi! I'm Fesoni, your AI shopping assistant. I'm here to understand your unique style and help you discover products that match your vibe. I'll also create personalized style documentation for you! Tell me about your style preferences, what you're looking for, or describe the aesthetic you're going for!
+                </p>
+              </div>
+            </div>
+          )}
+
           {messages.map((message) => (
             <div key={message.id} className="space-y-4">
               <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -466,17 +471,27 @@ const ChatInterface: React.FC = () => {
                 </div>
               </div>
 
-              {/* Products */}
+              {/* Products - Horizontal Scroll */}
               {message.products && message.products.length > 0 && (
                 <div className="mr-12">
                   <div className="flex items-center space-x-2 mb-4">
                     <ShoppingBag className="w-4 h-4 text-purple-400" />
                     <h3 className="text-sm font-medium text-gray-300">Curated for your style</h3>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {message.products.slice(0, 6).map((product, index) => (
-                      <ProductCard key={index} product={product} />
-                    ))}
+                  {/* Horizontal scroll container */}
+                  <div className="overflow-x-auto scrollbar-hide">
+                    <div className="flex space-x-4 pb-4" style={{ width: 'max-content' }}>
+                      {message.products.map((product, index) => {
+                        // Add category to product if not present
+                        const productWithCategory = {
+                          ...product,
+                          category: product.category || inferProductCategory(product.title)
+                        };
+                        return (
+                          <ProductCard key={index} product={productWithCategory} />
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}

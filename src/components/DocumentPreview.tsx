@@ -8,7 +8,6 @@ import {
   Smartphone,
   Image as ImageIcon,
   X,
-  ExternalLink,
   Clock,
   CheckCircle,
   AlertCircle
