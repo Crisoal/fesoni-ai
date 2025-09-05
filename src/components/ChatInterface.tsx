@@ -90,15 +90,47 @@ const ChatInterface: React.FC = () => {
           role: 'system',
           content: `You are Fesoni, a sophisticated AI shopping assistant. Based on the user's style preferences, provide helpful guidance, ask intelligent follow-up questions when needed, and offer personalized recommendations. Be conversational, insightful, and focus on understanding their unique style vibe.
 
-          Style Analysis: ${JSON.stringify(styleAnalysis)}
-          Found Products: ${products.length} products found
-          
-          If you found relevant products, mention that you'll also create personalized style documentation for them.
-          Provide a natural, helpful response that acknowledges their preferences and guides the conversation forward.`
+        Style Analysis: ${JSON.stringify(styleAnalysis)}
+        Found Products: ${products.length} products found
+        
+        If you found relevant products, mention that you'll also create personalized style documentation for them.
+        Provide a natural, helpful response that acknowledges their preferences and guides the conversation forward.`
         },
         ...conversationHistory,
         { role: 'user', content: inputValue }
       ]);
+
+      // Create portfolio data whenever we have products (for toolbar access)
+      let portfolioData: StylePortfolioData | undefined;
+      if (products.length > 0) {
+        portfolioData = {
+          userPreferences: {
+            aesthetics: styleAnalysis.styleAnalysis.aesthetics || ['modern'],
+            productTypes: styleAnalysis.styleAnalysis.productTypes || ['fashion'],
+            budget: styleAnalysis.styleAnalysis.budget || undefined,
+            lifestyle: styleAnalysis.styleAnalysis.lifestyle || 'casual',
+          },
+          products: products.slice(0, 12).map(product => ({
+            product_id: product.product_id,
+            title: product.title,
+            url: product.url,
+            image: product.image,
+            price: product.price,
+            category: inferProductCategory(product.title),
+            brand: product.brand || product.manufacturer || '',
+            rating: product.rating || 0,
+            reviews: product.reviews || 0,
+            prime: product.prime || false,
+            retail_price: product.retail_price || product.price
+          })),
+          metadata: {
+            userName: 'Valued Customer',
+            createdDate: new Date().toISOString(),
+            season: getCurrentSeason(),
+            occasion: styleAnalysis.styleAnalysis.lifestyle || 'general'
+          }
+        };
+      }
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -106,12 +138,15 @@ const ChatInterface: React.FC = () => {
         content: aiResponse,
         timestamp: new Date(),
         products: products.length > 0 ? products : undefined,
+        portfolioData: portfolioData, // Always include portfolio data when products exist
       };
 
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Generate style documents if we have sufficient data
-      if (products.length > 0 && styleAnalysis.styleAnalysis.aesthetics && styleAnalysis.styleAnalysis.aesthetics.length > 0) {
+      // Only attempt document generation if we have comprehensive style data
+      if (products.length > 0 &&
+        styleAnalysis.styleAnalysis.aesthetics &&
+        styleAnalysis.styleAnalysis.aesthetics.length > 0) {
         await generateStyleDocuments(styleAnalysis, products, assistantMessage.id);
       }
 
@@ -195,11 +230,11 @@ const ChatInterface: React.FC = () => {
       // Update the message with generated documents AND portfolio data
       setMessages(prev => prev.map(msg =>
         msg.id === messageId
-          ? { 
-              ...msg, 
-              styleDocuments,
-              portfolioData // Store portfolio data for toolbar access
-            }
+          ? {
+            ...msg,
+            styleDocuments,
+            portfolioData // Store portfolio data for toolbar access
+          }
           : msg
       ));
 
@@ -420,11 +455,11 @@ const ChatInterface: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Style Document Toolbar - positioned after horizontal scroll */}
-                  {message.styleDocuments && message.portfolioData && (
+                  {/* Style Document Toolbar - Always show when products exist and portfolioData is available */}
+                  {message.portfolioData && (
                     <div className="mt-4">
                       <StyleDocumentToolbar
-                        documents={message.styleDocuments}
+                        documents={message.styleDocuments || {}} // Pass empty object if no documents yet
                         portfolioData={message.portfolioData}
                         onDownloadDocument={handleDownloadDocument}
                         foxitService={foxitService}
