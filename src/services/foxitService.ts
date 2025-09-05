@@ -159,11 +159,16 @@ export class FoxitService {
     outputFormat: 'pdf' | 'docx' = 'pdf'
   ): Promise<FoxitDocumentGenerationResponse> {
     try {
+      // Process hyperlinks in the document values
+      const processedValues = this.processHyperlinksInData(documentValues);
+      
       const requestBody = {
-        documentValues,
+        documentValues: processedValues,
         base64FileString: templateBase64,
         outputFormat,
-        currencyCulture: 'en-US'
+        currencyCulture: 'en-US',
+        // Enable hyperlink processing
+        preserveHyperlinks: true
       };
 
       console.log('Making document generation request to:', `${this.documentGenerationUrl}/api/GenerateDocumentBase64`);
@@ -186,6 +191,24 @@ export class FoxitService {
       console.error('Document generation error:', error);
       throw new Error('Failed to generate document from template');
     }
+  }
+
+  private processHyperlinksInData(data: Record<string, unknown>): Record<string, unknown> {
+    const processed: Record<string, unknown> = {};
+    
+    for (const [key, value] of Object.entries(data)) {
+      if (typeof value === 'string') {
+        // Convert HYPERLINK patterns to proper Word hyperlink format
+        processed[key] = value.replace(
+          /HYPERLINK "([^"]+)" "([^"]+)"/g,
+          '<w:hyperlink r:id="rId_$1"><w:r><w:t>$2</w:t></w:r></w:hyperlink>'
+        );
+      } else {
+        processed[key] = value;
+      }
+    }
+    
+    return processed;
   }
 
   async analyzeTemplate(templateBase64: string): Promise<{
@@ -452,6 +475,7 @@ export class FoxitService {
       const templateData = this.prepareTemplateData(portfolioData);
       console.log('Template data prepared:', Object.keys(templateData));
 
+      // Generate both PDF and DOCX versions for better formatting options
       const generatedDoc = await this.generateDocumentFromTemplate(
         templateBase64,
         templateData,
@@ -459,12 +483,22 @@ export class FoxitService {
       );
       console.log('Document generated successfully');
 
+      // Also generate a DOCX version for better hyperlink support
+      const generatedDocx = await this.generateDocumentFromTemplate(
+        templateBase64,
+        templateData,
+        'docx'
+      );
+      console.log('DOCX version generated successfully');
+
       const result: {
         mainDocument: string;
         documentId?: string;
+        docxVersion?: string;
         processedVersions: Array<{ type: string; taskId: string }>;
       } = {
         mainDocument: generatedDoc.base64FileString,
+        docxVersion: generatedDocx.base64FileString,
         processedVersions: []
       };
 
@@ -473,6 +507,10 @@ export class FoxitService {
         console.log('Document uploaded for processing:', uploadedDoc.documentId);
 
         result.documentId = uploadedDoc.documentId;
+
+        // Also upload the DOCX version
+        const uploadedDocx = await this.uploadGeneratedDocument(generatedDocx.base64FileString, 'docx');
+        console.log('DOCX version uploaded:', uploadedDocx.documentId);
 
         const processingPromises = [];
 
@@ -501,6 +539,11 @@ export class FoxitService {
               console.warn('Page extraction task failed:', error);
               return null;
             })
+        );
+
+        // Add DOCX download option
+        processingPromises.push(
+          Promise.resolve({ type: 'docx-version', taskId: uploadedDocx.documentId })
         );
 
         const processedResults = await Promise.all(processingPromises);
@@ -533,16 +576,23 @@ export class FoxitService {
     }
   }
 
-  private async uploadGeneratedDocument(base64String: string): Promise<FoxitUploadResponse> {
+  private async uploadGeneratedDocument(base64String: string, format: 'pdf' | 'docx' = 'pdf'): Promise<FoxitUploadResponse> {
     const byteCharacters = atob(base64String);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
       byteNumbers[i] = byteCharacters.charCodeAt(i);
     }
     const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: 'application/pdf' });
+    const mimeType = format === 'docx' 
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : 'application/pdf';
+    const blob = new Blob([byteArray], { type: mimeType });
 
-    return this.uploadDocument(blob, 'generated-style-guide.pdf');
+    const fileName = format === 'docx' 
+      ? 'generated-style-guide.docx'
+      : 'generated-style-guide.pdf';
+    
+    return this.uploadDocument(blob, fileName);
   }
 
   private prepareTemplateData(portfolioData: StylePortfolioData): Record<string, unknown> {
@@ -558,7 +608,7 @@ export class FoxitService {
     const productSections: Record<string, string> = {};
     Object.entries(productsByCategory).forEach(([category, categoryProducts]) => {
       const categoryKey = category.toLowerCase().replace(/\s+/g, '');
-      productSections[`${categoryKey}Products`] = this.generateCategorySection(categoryProducts, category);
+      productSections[`${categoryKey}Products`] = this.generateFormattedCategorySection(categoryProducts, category);
     });
 
     const stylingTips = this.generateStylingTips(
@@ -569,6 +619,9 @@ export class FoxitService {
     const colorPalette = this.generateColorPalette(userPreferences.aesthetics)
       .slice(0, 6)
       .join(' • ');
+
+    // Generate formatted product list with proper hyperlinks
+    const formattedProductList = this.generateFormattedProductList(products);
 
     const templateData = {
       // User info
@@ -591,7 +644,7 @@ export class FoxitService {
       ...productSections,
 
       // Complete product list
-      productList: products.map(product => this.formatProductForDocument(product)).join('\n'),
+      productList: formattedProductList,
 
       // Styling content
       stylingTipsList: stylingTips.map(tip => `• ${tip}`).join('\n\n'),
@@ -643,6 +696,59 @@ Try refining your search or exploring different brands to find perfect ${categor
     const productList = products.map(product => this.formatProductForDocument(product)).join('\n');
 
     return `${categoryIntro}\n\n${productList}`;
+  }
+
+  private generateFormattedCategorySection(products: StylePortfolioData['products'], category: string): string {
+    if (products.length === 0) {
+      return `No ${category.toLowerCase()} items found in your current selection.
+      
+Try refining your search or exploring different brands to find perfect ${category.toLowerCase()} pieces for your ${this.currentAesthetics} aesthetic.`;
+    }
+
+    const categoryIntro = this.getCategoryIntro(category, products.length);
+    const productList = this.generateFormattedProductList(products);
+
+    return `${categoryIntro}\n\n${productList}`;
+  }
+
+  private generateFormattedProductList(products: StylePortfolioData['products']): string {
+    return products.map((product, index) => {
+      const title = product.title.length > 80 
+        ? product.title.substring(0, 77) + '...' 
+        : product.title;
+
+      const price = product.price ? `$${product.price.toFixed(2)}` : 'Price varies';
+      const originalPrice = product.retail_price && product.retail_price > product.price
+        ? ` (was $${product.retail_price.toFixed(2)})`
+        : '';
+
+      const rating = product.rating ? `${product.rating.toFixed(1)}/5 stars` : '';
+      const reviews = product.reviews ? `(${product.reviews.toLocaleString()} reviews)` : '';
+      const brand = product.brand ? `by ${product.brand}` : '';
+      const prime = product.prime ? 'Prime Eligible' : '';
+
+      // Create formatted product entry
+      let productEntry = `${index + 1}. ${title}`;
+      
+      if (brand) {
+        productEntry += ` ${brand}`;
+      }
+      
+      productEntry += `\n   Price: ${price}${originalPrice}`;
+      
+      if (rating && reviews) {
+        productEntry += `\n   Rating: ${rating} ${reviews}`;
+      }
+      
+      if (prime) {
+        productEntry += `\n   ✓ ${prime}`;
+      }
+      
+      // Add hyperlinked shop now button - this will be processed by the Word template
+      productEntry += `\n   🛒 HYPERLINK "${product.url}" "Shop Now"`;
+      
+      return productEntry;
+    }).join('\n\n');
   }
 
   private getCategoryIntro(category: string, count: number): string {
