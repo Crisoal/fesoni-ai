@@ -1,5 +1,4 @@
-// Updated vite.config.ts - Fixed proxy configuration
-
+// vite.config.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -43,7 +42,6 @@ export default defineConfig({
         target: 'https://na1.fusion.foxit.com',
         changeOrigin: true,
         rewrite: (path) => {
-          // Remove the /api/foxit prefix to get the correct Foxit API path
           const rewritten = path.replace(/^\/api\/foxit/, '');
           console.log(`Rewriting ${path} to ${rewritten}`);
           return rewritten;
@@ -60,27 +58,22 @@ export default defineConfig({
               proxyReq.setHeader('client_secret', clientSecret);
               proxyReq.setHeader('Accept', 'application/json');
               
-              // Ensure proper content type for all requests
               if (req.method !== 'GET' && !proxyReq.getHeader('Content-Type')) {
                 proxyReq.setHeader('Content-Type', 'application/json');
               }
             }
             
-            // Log the complete URL being proxied
             const fullUrl = `${proxyReq.protocol}//${proxyReq.host}${proxyReq.path}`;
             console.log(`Proxying ${req.method} ${req.url} -> ${fullUrl}`);
           });
           
           proxy.on('proxyRes', (proxyRes, req, _res) => {
-            // Set CORS headers
             proxyRes.headers['Access-Control-Allow-Origin'] = '*';
             proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
             proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, client_id, client_secret, Accept';
             
-            // Log response for debugging
             console.log(`Response ${proxyRes.statusCode} for ${req.method} ${req.url}`);
             
-            // Log error responses
             if (proxyRes.statusCode >= 400) {
               proxyRes.on('data', (chunk) => {
                 console.error(`Error response body: ${chunk.toString()}`);
@@ -96,21 +89,18 @@ export default defineConfig({
     }
   },
 
-  // Include .docx files as assets
-  assetsInclude: ['**/*.docx', '**/*.doc'],
+  // Include .docx/.doc and templates as assets
+  assetsInclude: ['**/*.docx', '**/*.doc', 'public/assets/templates/**/*'],
   
-  // Exclude lucide-react from dependency pre-bundling
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
   
-  // Environment variables configuration
   define: {
     'process.env.VITE_FOXIT_CLIENT_ID': JSON.stringify(process.env.VITE_FOXIT_CLIENT_ID),
     'process.env.VITE_FOXIT_CLIENT_SECRET': JSON.stringify(process.env.VITE_FOXIT_CLIENT_SECRET),
   },
   
-  // For production builds
   build: {
     rollupOptions: {
       external: [],
