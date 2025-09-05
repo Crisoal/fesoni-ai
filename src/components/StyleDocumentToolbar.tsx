@@ -1,17 +1,18 @@
 // src/components/StyleDocumentToolbar.tsx
 import React, { useState } from 'react';
-import { 
-  FileText, 
-  Share2, 
-  Scissors, 
-  Link, 
-  Download, 
-  Loader2, 
+import {
+  FileText,
+  Share2,
+  Scissors,
+  Link,
+  Download,
+  Loader2,
   CheckCircle,
   Instagram,
   Facebook
 } from 'lucide-react';
 import { FoxitService, StylePortfolioData } from '../services/foxitService';
+import { SocialImageGenerator } from '../services/socialImageGenerator';
 
 interface StyleDocuments {
   mainDocument?: string;
@@ -80,7 +81,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     },
     {
       name: 'Pinterest Vertical',
-      dimensions: '735x1102px', 
+      dimensions: '735x1102px',
       width: 735,
       height: 1102,
       description: 'Optimized for Pinterest pins'
@@ -111,7 +112,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     },
     {
       id: 'bottoms',
-      name: 'Bottoms Focus', 
+      name: 'Bottoms Focus',
       description: 'Style profile + bottoms + styling tips',
       pageRange: '1,3'
     },
@@ -140,7 +141,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     {
       id: 'care-guide',
       name: 'Care Instructions',
-      description: 'Add fabric care and maintenance guide', 
+      description: 'Add fabric care and maintenance guide',
       additionalContent: 'Linen care, cotton maintenance, vintage preservation, stain removal'
     },
     {
@@ -159,11 +160,11 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
 
   const handleDownloadMainDocument = async () => {
     if (!documents.mainDocument) return;
-    
+
     try {
       setIsProcessing(true);
       setProcessingStatus('Preparing your style guide...');
-      
+
       // Convert base64 to blob
       const byteCharacters = atob(documents.mainDocument);
       const byteNumbers = new Array(byteCharacters.length);
@@ -172,7 +173,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/pdf' });
-      
+
       // Create download link
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -182,7 +183,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       setProcessingStatus('Downloaded successfully!');
       setTimeout(() => setIsProcessing(false), 1000);
     } catch (error) {
@@ -192,56 +193,46 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     }
   };
 
+  // Add this to your StyleDocumentToolbar component
   const handleCreateSocialImages = async (selectedFormats: SocialImageFormat[]) => {
     if (!documents.documentId) return;
-    
+
     try {
       setIsProcessing(true);
       setProcessingStatus('Creating social media images...');
       const newTasks: Array<{ type: string; filename: string; downloadUrl?: string }> = [];
-      
-      for (const format of selectedFormats) {
+
+      // Initialize the social image generator
+      const imageGenerator = new SocialImageGenerator();
+
+      // Generate images using our custom generator
+      const generatedImages = await imageGenerator.createSocialImages(selectedFormats, portfolioData);
+
+      for (const { format, blob, filename } of generatedImages) {
         try {
-          setProcessingStatus(`Creating ${format.name}...`);
-          
-          // Convert PDF pages to images with specific dimensions
-          const task = await foxitService.convertToImages(
-            documents.documentId,
-            '1-3', // First 3 pages for social sharing
-            200 // High DPI for quality
-          );
-          
-          // Poll for completion
-          let attempts = 0;
-          const maxAttempts = 20;
-          
-          while (attempts < maxAttempts) {
-            const status = await foxitService.checkTaskStatus(task.taskId);
-            
-            if (status.status === 'completed') {
-              newTasks.push({
-                type: 'social-image',
-                filename: `${format.name.replace(/\s+/g, '_')}_${portfolioData.userPreferences.aesthetics.join('_')}.zip`,
-                downloadUrl: status.downloadUrl || status.documentId
-              });
-              break;
-            } else if (status.status === 'failed') {
-              throw new Error(`Failed to create ${format.name}`);
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            attempts++;
-          }
-          
+          setProcessingStatus(`Processing ${format.name}...`);
+
+          // Upload the generated image to Foxit for temporary storage/sharing
+          const uploadResult = await foxitService.uploadDocument(blob, filename);
+
+          // Add to completed tasks
+          newTasks.push({
+            type: 'social-image',
+            filename: filename,
+            downloadUrl: uploadResult.documentId
+          });
+
+          setProcessingStatus(`Created ${format.name} successfully!`);
+
         } catch (error) {
-          console.error(`Failed to create ${format.name}:`, error);
+          console.error(`Failed to process ${format.name}:`, error);
         }
       }
-      
+
       setCompletedTasks(prev => [...prev, ...newTasks]);
       setProcessingStatus(`Created ${newTasks.length} social image sets!`);
       setTimeout(() => setIsProcessing(false), 2000);
-      
+
     } catch (error) {
       console.error('Social image creation error:', error);
       setProcessingStatus('Failed to create social images');
@@ -251,30 +242,30 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
 
   const handleSplitDocument = async (selectedOptions: SplitOption[]) => {
     if (!documents.documentId) return;
-    
+
     try {
       setIsProcessing(true);
       setProcessingStatus('Splitting your style guide...');
       const newTasks: Array<{ type: string; filename: string; downloadUrl?: string }> = [];
-      
+
       for (const option of selectedOptions) {
         try {
           setProcessingStatus(`Creating ${option.name}...`);
-          
+
           // Extract specific pages for this split
           const task = await foxitService.extractFromDocument(
             documents.documentId,
             'PAGE',
             option.pageRange
           );
-          
+
           // Poll for completion
           let attempts = 0;
           const maxAttempts = 20;
-          
+
           while (attempts < maxAttempts) {
             const status = await foxitService.checkTaskStatus(task.taskId);
-            
+
             if (status.status === 'completed') {
               newTasks.push({
                 type: 'split-guide',
@@ -285,20 +276,20 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
             } else if (status.status === 'failed') {
               throw new Error(`Failed to create ${option.name}`);
             }
-            
+
             await new Promise(resolve => setTimeout(resolve, 2000));
             attempts++;
           }
-          
+
         } catch (error) {
           console.error(`Failed to create ${option.name}:`, error);
         }
       }
-      
+
       setCompletedTasks(prev => [...prev, ...newTasks]);
       setProcessingStatus(`Created ${newTasks.length} split guides!`);
       setTimeout(() => setIsProcessing(false), 2000);
-      
+
     } catch (error) {
       console.error('Document split error:', error);
       setProcessingStatus('Failed to split document');
@@ -308,19 +299,19 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
 
   const handleMergeDocument = async (selectedOptions: MergeOption[]) => {
     if (!documents.documentId) return;
-    
+
     try {
       setIsProcessing(true);
       setProcessingStatus('Creating merged documents...');
       const newTasks: Array<{ type: string; filename: string; downloadUrl?: string }> = [];
-      
+
       for (const option of selectedOptions) {
         try {
           setProcessingStatus(`Creating ${option.name} package...`);
-          
+
           // Generate additional content based on merge option
           const additionalDoc = await createAdditionalContent(option, portfolioData);
-          
+
           if (additionalDoc) {
             // Combine with main document
             const task = await foxitService.combineDocuments(
@@ -333,14 +324,14 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
                 tocTitle: `${portfolioData.userPreferences.aesthetics.join(' + ')} Complete Guide`
               }
             );
-            
+
             // Poll for completion
             let attempts = 0;
             const maxAttempts = 20;
-            
+
             while (attempts < maxAttempts) {
               const status = await foxitService.checkTaskStatus(task.taskId);
-              
+
               if (status.status === 'completed') {
                 newTasks.push({
                   type: 'merged-guide',
@@ -351,21 +342,21 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
               } else if (status.status === 'failed') {
                 throw new Error(`Failed to create ${option.name} package`);
               }
-              
+
               await new Promise(resolve => setTimeout(resolve, 2000));
               attempts++;
             }
           }
-          
+
         } catch (error) {
           console.error(`Failed to create ${option.name}:`, error);
         }
       }
-      
+
       setCompletedTasks(prev => [...prev, ...newTasks]);
       setProcessingStatus(`Created ${newTasks.length} merged packages!`);
       setTimeout(() => setIsProcessing(false), 2000);
-      
+
     } catch (error) {
       console.error('Document merge error:', error);
       setProcessingStatus('Failed to merge documents');
@@ -374,23 +365,23 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
   };
 
   const createAdditionalContent = async (
-    option: MergeOption, 
+    option: MergeOption,
     portfolioData: StylePortfolioData
   ): Promise<{ documentId: string } | null> => {
     try {
       // Get additional content template based on option type
       const templateBase64 = await getAdditionalContentTemplate(option.id);
-      
+
       // Prepare data for additional content
       const additionalData = prepareAdditionalContentData(option, portfolioData);
-      
+
       // Generate additional document
       const generatedDoc = await foxitService.generateDocumentFromTemplate(
         templateBase64,
         additionalData,
         'pdf'
       );
-      
+
       // Upload generated document
       const byteCharacters = atob(generatedDoc.base64FileString);
       const byteNumbers = new Array(byteCharacters.length);
@@ -399,11 +390,11 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/pdf' });
-      
+
       const uploadResult = await foxitService.uploadDocument(blob, `additional-${option.id}.pdf`);
-      
+
       return { documentId: uploadResult.documentId };
-      
+
     } catch (error) {
       console.error(`Failed to create additional content for ${option.id}:`, error);
       return null;
@@ -413,7 +404,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
   const getAdditionalContentTemplate = async (optionId: string): Promise<string> => {
     try {
       const templateResponse = await fetch(`/assets/templates/${optionId}-template.docx`);
-      
+
       if (!templateResponse.ok) {
         // Fallback to a generic additional content template
         const fallbackResponse = await fetch('/assets/templates/additional-content-template.docx');
@@ -423,7 +414,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
         const arrayBuffer = await fallbackResponse.arrayBuffer();
         return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       }
-      
+
       const arrayBuffer = await templateResponse.arrayBuffer();
       return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
     } catch (error) {
@@ -433,7 +424,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
   };
 
   const prepareAdditionalContentData = (
-    option: MergeOption, 
+    option: MergeOption,
     portfolioData: StylePortfolioData
   ): Record<string, unknown> => {
     const baseData = {
@@ -452,7 +443,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
           colorTrends: generateColorTrends(portfolioData.metadata.season || 'Spring'),
           keyPieces: generateKeyPieces(portfolioData.userPreferences.aesthetics)
         };
-        
+
       case 'care-guide':
         return {
           ...baseData,
@@ -460,7 +451,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
           stainRemoval: generateStainRemovalTips(),
           storageTips: generateStorageTips()
         };
-        
+
       case 'size-fit':
         return {
           ...baseData,
@@ -468,13 +459,13 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
           fitTips: generateFitTips(portfolioData.userPreferences.aesthetics),
           measurementGuide: generateMeasurementGuide()
         };
-        
+
       case 'master-collection':
         return {
           ...baseData,
           allContent: 'Complete package with trends, care instructions, sizing, and advanced styling'
         };
-        
+
       default:
         return baseData;
     }
@@ -496,7 +487,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
   const generateColorTrends = (season: string): string => {
     const seasonalColors = {
       'Spring': 'Soft pastels, sage green, warm coral, butter yellow',
-      'Summer': 'Ocean blues, coral pink, sandy beige, sunset orange', 
+      'Summer': 'Ocean blues, coral pink, sandy beige, sunset orange',
       'Fall': 'Rich burgundy, forest green, warm browns, golden yellow',
       'Winter': 'Deep navy, emerald green, berry tones, classic black'
     };
@@ -551,10 +542,10 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
 
   const handleDownloadTask = async (task: { filename: string; downloadUrl?: string }) => {
     if (!task.downloadUrl) return;
-    
+
     try {
       const blob = await onDownloadDocument(task.downloadUrl, task.filename);
-      
+
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -563,7 +554,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.error('Download error:', error);
     }
@@ -660,7 +651,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
               <p className="text-gray-300 mb-6">
                 Generate perfectly sized images for your social media platforms. Select the formats you want:
               </p>
-              
+
               <div className="space-y-4 mb-6">
                 {socialFormats.map((format) => (
                   <label key={format.name} className="flex items-start space-x-3 p-3 border border-gray-700 rounded-lg hover:border-gray-600 cursor-pointer">
@@ -715,7 +706,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
               <p className="text-gray-300 mb-6">
                 Create focused guides for specific categories. Each split will include your style profile plus the selected category:
               </p>
-              
+
               <div className="space-y-4 mb-6">
                 {splitOptions.map((option) => (
                   <label key={option.id} className="flex items-start space-x-3 p-3 border border-gray-700 rounded-lg hover:border-gray-600 cursor-pointer">
@@ -765,7 +756,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
               <p className="text-gray-300 mb-6">
                 Enhance your style guide with additional sections. Select what you'd like to add:
               </p>
-              
+
               <div className="space-y-4 mb-6">
                 {mergeOptions.map((option) => (
                   <label key={option.id} className="flex items-start space-x-3 p-3 border border-gray-700 rounded-lg hover:border-gray-600 cursor-pointer">
