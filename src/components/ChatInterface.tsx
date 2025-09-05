@@ -153,7 +153,13 @@ const ChatInterface: React.FC = () => {
           url: product.url,
           image: product.image,
           price: product.price,
-          category: inferProductCategory(product.title)
+          category: inferProductCategory(product.title),
+          // Include additional product details
+          brand: product.brand || product.manufacturer || '',
+          rating: product.rating || 0,
+          reviews: product.reviews || 0,
+          prime: product.prime || false,
+          retail_price: product.retail_price || product.price
         })),
         metadata: {
           userName: 'Valued Customer',
@@ -322,22 +328,6 @@ const ChatInterface: React.FC = () => {
         }
       }
       throw new Error(errorMessage);
-    }
-  };
-
-  const handleCheckTaskStatus = async (taskId: string) => {
-    try {
-      const taskStatus = await foxitService.checkTaskStatus(taskId);
-      return {
-        status: taskStatus.status,
-        downloadUrl: taskStatus.downloadUrl ||
-          (taskStatus.documentId ? `${foxitService.pdfServicesUrl}/api/documents/${taskStatus.documentId}/download` : undefined)
-      };
-    } catch (error) {
-      console.error('Task status check error:', error);
-      return {
-        status: 'failed' as const
-      };
     }
   };
 

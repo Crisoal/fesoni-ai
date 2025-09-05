@@ -16,6 +16,11 @@ export interface StylePortfolioData {
     image: string;
     price: number;
     category?: string;
+    brand?: string;
+    rating?: number;
+    reviews?: number;
+    prime?: boolean;
+    retail_price?: number;
   }>;
   metadata: {
     userName?: string;
@@ -79,23 +84,21 @@ interface ImageConversionRequestBody {
 }
 
 export class FoxitService {
-  public baseUrl: string;  // Changed from private to public
-  public documentGenerationUrl: string;  // Changed from private to public
-  public pdfServicesUrl: string;  // Changed from private to public
+  public baseUrl: string;
+  public documentGenerationUrl: string;
+  public pdfServicesUrl: string;
   private clientId: string;
   private clientSecret: string;
+  private currentAesthetics: string = '';
 
   constructor() {
-    // Use proxy URLs in development, direct URLs in production
     const isDevelopment = import.meta.env.DEV;
 
     if (isDevelopment) {
-      // Use Vite proxy in development
       this.documentGenerationUrl = '/api/foxit/document-generation';
       this.pdfServicesUrl = '/api/foxit/pdf-services';
-      this.baseUrl = '/api/foxit'; // For backward compatibility
+      this.baseUrl = '/api/foxit';
     } else {
-      // Direct API calls in production (you'll need to handle CORS differently in production)
       this.documentGenerationUrl = 'https://na1.fusion.foxit.com/document-generation';
       this.pdfServicesUrl = 'https://na1.fusion.foxit.com/pdf-services';
       this.baseUrl = 'https://na1.fusion.foxit.com';
@@ -124,9 +127,6 @@ export class FoxitService {
     };
   }
 
-  /**
-   * Upload a file to Foxit and get document ID
-   */
   async uploadDocument(file: File | Blob, fileName: string = 'document.pdf'): Promise<FoxitUploadResponse> {
     try {
       const formData = new FormData();
@@ -153,19 +153,16 @@ export class FoxitService {
     }
   }
 
-  /**
- * Generate a document from template using Document Generation API
- */
   async generateDocumentFromTemplate(
     templateBase64: string,
     documentValues: Record<string, unknown>,
-    outputFormat: 'pdf' | 'docx' = 'pdf' // Changed to lowercase
+    outputFormat: 'pdf' | 'docx' = 'pdf'
   ): Promise<FoxitDocumentGenerationResponse> {
     try {
       const requestBody = {
         documentValues,
         base64FileString: templateBase64,
-        outputFormat, // This will now be lowercase 'pdf' or 'docx'
+        outputFormat,
         currencyCulture: 'en-US'
       };
 
@@ -191,9 +188,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Analyze a template document to extract tags
-   */
   async analyzeTemplate(templateBase64: string): Promise<{
     singleTagsString: string[];
     doubleTagsString: string[];
@@ -221,9 +215,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Compress a PDF document
-   */
   async compressDocument(
     documentId: string,
     compressionLevel: 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW'
@@ -252,9 +243,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Split a PDF document into multiple files
-   */
   async splitDocument(documentId: string, pageCount: number): Promise<FoxitTaskResponse> {
     try {
       const response = await fetch(`${this.pdfServicesUrl}/api/documents/modify/pdf-split`, {
@@ -280,9 +268,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Extract content from PDF (text, images, or pages)
-   */
   async extractFromDocument(
     documentId: string,
     extractType: 'TEXT' | 'IMAGE' | 'PAGE',
@@ -318,9 +303,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Convert PDF pages to images
-   */
   async convertToImages(
     documentId: string,
     pageRange?: string,
@@ -358,9 +340,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Combine multiple PDF documents
-   */
   async combineDocuments(
     documentIds: string[],
     config?: CombineConfig
@@ -368,7 +347,7 @@ export class FoxitService {
     try {
       const documentInfos: DocumentInfo[] = documentIds.map(id => ({
         documentId: id,
-        password: '' // Empty for unsecured documents
+        password: ''
       }));
 
       const response = await fetch(`${this.pdfServicesUrl}/api/documents/enhance/pdf-combine`, {
@@ -398,28 +377,18 @@ export class FoxitService {
     }
   }
 
-  /**
- * Download a document by its ID or URL
- */
   async downloadDocument(documentIdOrUrl: string, filename?: string): Promise<Blob> {
     try {
       let url: string;
 
-      // Check if it's already a full URL (starts with http or contains /api/foxit/)
       if (documentIdOrUrl.startsWith('http') || documentIdOrUrl.includes('/api/foxit/')) {
-        // It's already a full URL, use it as-is
         url = documentIdOrUrl;
-
-        // Add filename parameter if provided and not already present
         if (filename && !url.includes('filename=')) {
           const separator = url.includes('?') ? '&' : '?';
           url = `${url}${separator}filename=${encodeURIComponent(filename)}`;
         }
       } else {
-        // It's a document ID, build the download URL
         url = `${this.pdfServicesUrl}/api/documents/${documentIdOrUrl}/download`;
-
-        // Add filename parameter if provided
         if (filename) {
           const params = new URLSearchParams({ filename });
           url = `${url}?${params.toString()}`;
@@ -442,7 +411,6 @@ export class FoxitService {
         const errorText = await response.text();
         console.error('Download response:', response.status, errorText);
 
-        // Provide more specific error messages
         if (response.status === 404) {
           throw new Error('Document not found or has expired (24-hour retention)');
         } else if (response.status === 401 || response.status === 403) {
@@ -465,11 +433,8 @@ export class FoxitService {
     }
   }
 
-  /**
- * Create a style portfolio workflow using templates
- */
   async createStylePortfolio(portfolioData: StylePortfolioData): Promise<{
-    mainDocument: string; // base64 string
+    mainDocument: string;
     documentId?: string;
     processedVersions: Array<{
       type: string;
@@ -479,26 +444,21 @@ export class FoxitService {
     try {
       console.log('Creating style portfolio...');
 
-      // Get the template
-      const templateBase64 = await this.getStyleTemplate();
-      console.log('Template loaded successfully');
+      const templateBase64 = await this.getTemplate('comprehensive-style-guide-template.docx');
+      console.log('Comprehensive template loaded successfully');
 
-      // Debug: Analyze template to see what tags Foxit detects
-      await this.debugTemplate();
+      await this.debugTemplate(templateBase64);
 
-      // Prepare data for template
       const templateData = this.prepareTemplateData(portfolioData);
       console.log('Template data prepared:', Object.keys(templateData));
 
-      // Generate main document with lowercase format
       const generatedDoc = await this.generateDocumentFromTemplate(
         templateBase64,
         templateData,
-        'pdf' // Changed to lowercase
+        'pdf'
       );
       console.log('Document generated successfully');
 
-      // Initialize result with main document
       const result: {
         mainDocument: string;
         documentId?: string;
@@ -508,17 +468,14 @@ export class FoxitService {
         processedVersions: []
       };
 
-      // Try to upload for additional processing (optional)
       try {
         const uploadedDoc = await this.uploadGeneratedDocument(generatedDoc.base64FileString);
         console.log('Document uploaded for processing:', uploadedDoc.documentId);
 
         result.documentId = uploadedDoc.documentId;
 
-        // Create processed versions (non-blocking)
         const processingPromises = [];
 
-        // Compressed version
         processingPromises.push(
           this.compressDocument(uploadedDoc.documentId, 'MEDIUM')
             .then(task => ({ type: 'compressed', taskId: task.taskId }))
@@ -528,7 +485,6 @@ export class FoxitService {
             })
         );
 
-        // Convert to images for social sharing
         processingPromises.push(
           this.convertToImages(uploadedDoc.documentId, '1-3', 200)
             .then(task => ({ type: 'social-images', taskId: task.taskId }))
@@ -538,7 +494,6 @@ export class FoxitService {
             })
         );
 
-        // Extract key pages
         processingPromises.push(
           this.extractFromDocument(uploadedDoc.documentId, 'PAGE', '1,2')
             .then(task => ({ type: 'quick-reference', taskId: task.taskId }))
@@ -553,7 +508,6 @@ export class FoxitService {
 
       } catch (uploadError) {
         console.warn('Document upload failed, but main document is available:', uploadError);
-        // Continue without processed versions
       }
 
       return result;
@@ -564,16 +518,10 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Debug method to analyze template and see what tags Foxit detects
-   */
-  async debugTemplate(): Promise<void> {
+  async debugTemplate(templateBase64?: string): Promise<void> {
     try {
-      // Get the template
-      const templateBase64 = await this.getStyleTemplate();
-
-      // Analyze the template to see what tags Foxit finds
-      const analysis = await this.analyzeTemplate(templateBase64);
+      const template = templateBase64 || await this.getTemplate('comprehensive-style-guide-template.docx');
+      const analysis = await this.analyzeTemplate(template);
 
       console.log('=== FOXIT TEMPLATE ANALYSIS ===');
       console.log('Single Tags Found:', analysis.singleTagsString);
@@ -585,11 +533,7 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Helper method to upload a base64 document
-   */
   private async uploadGeneratedDocument(base64String: string): Promise<FoxitUploadResponse> {
-    // Convert base64 to blob
     const byteCharacters = atob(base64String);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
@@ -601,40 +545,33 @@ export class FoxitService {
     return this.uploadDocument(blob, 'generated-style-guide.pdf');
   }
 
-  /**
- * Prepare data for document template - Reverted to string format
- */
   private prepareTemplateData(portfolioData: StylePortfolioData): Record<string, unknown> {
     const { userPreferences, products, metadata } = portfolioData;
 
-    // Generate styling tips as formatted string instead of array
+    // Store current aesthetics for category intros
+    this.currentAesthetics = userPreferences.aesthetics.join(' + ');
+
+    // Group products by category for organized display
+    const productsByCategory = this.groupProductsByCategory(products);
+
+    // Generate enhanced product sections
+    const productSections: Record<string, string> = {};
+    Object.entries(productsByCategory).forEach(([category, categoryProducts]) => {
+      const categoryKey = category.toLowerCase().replace(/\s+/g, '');
+      productSections[`${categoryKey}Products`] = this.generateCategorySection(categoryProducts, category);
+    });
+
     const stylingTips = this.generateStylingTips(
       userPreferences.aesthetics,
       userPreferences.lifestyle
     );
 
-    // Convert products to formatted text string (BACK TO ORIGINAL)
-    const productList = products.slice(0, 10).map(product => {
-      const title = product.title.length > 80
-        ? product.title.substring(0, 77) + '...'
-        : product.title;
-      const price = product.price ? `$${product.price.toFixed(2)}` : 'Price varies';
-      const category = product.category || 'Fashion';
-
-      return `- ${title}
-  Price: ${price} | Category: ${category}`;
-    }).join('\n\n');
-
-    // Convert styling tips to formatted text string (BACK TO ORIGINAL)
-    const stylingTipsList = stylingTips.map(tip => `- ${tip}`).join('\n\n');
-
-    // Generate color palette as readable string
     const colorPalette = this.generateColorPalette(userPreferences.aesthetics)
       .slice(0, 6)
       .join(' • ');
 
     const templateData = {
-      // User info - simple strings only
+      // User info
       userName: metadata.userName || 'Style Enthusiast',
       createdDate: new Date(metadata.createdDate).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -644,32 +581,125 @@ export class FoxitService {
       season: metadata.season || 'Current Season',
       occasion: metadata.occasion || userPreferences.lifestyle || 'General',
 
-      // Style preferences as simple strings
+      // Style preferences
       aesthetics: userPreferences.aesthetics.join(' + '),
       lifestyle: userPreferences.lifestyle,
       budget: userPreferences.budget || 'Flexible',
       personalStyle: userPreferences.personalStyle || userPreferences.aesthetics.join(' + '),
 
-      // Content as formatted strings (NOT arrays)
-      productList: productList,
-      stylingTipsList: stylingTipsList,
-      colorPalette: colorPalette
+      // Product content organized by category
+      ...productSections,
+
+      // Complete product list
+      productList: products.map(product => this.formatProductForDocument(product)).join('\n'),
+
+      // Styling content
+      stylingTipsList: stylingTips.map(tip => `• ${tip}`).join('\n\n'),
+      colorPalette: colorPalette,
+
+      // Statistics
+      totalProducts: products.length,
+      categoriesCount: Object.keys(productsByCategory).length,
+      averagePrice: this.calculateAveragePrice(products),
+      primeEligible: products.filter(p => p.prime).length,
+      categorySummary: Object.entries(productsByCategory)
+        .map(([category, products]) => `${category}: ${products.length} items`)
+        .join(' | '),
+
+      // Additional template content placeholders
+      contentTitle: 'Additional Style Content',
+      mainContent: 'Content will be dynamically generated based on merge type',
+      integrationTips: 'Styling integration tips will be generated contextually'
     };
 
     console.log('Template data prepared with keys:', Object.keys(templateData));
-    console.log('Product list preview:', productList.substring(0, 100) + '...');
-    console.log('Styling tips preview:', stylingTipsList.substring(0, 100) + '...');
+    console.log('Product categories:', Object.keys(productsByCategory));
 
     return templateData;
   }
 
-  /**
- * Get style template - loads pre-designed Word template as base64
- */
-  private async getStyleTemplate(): Promise<string> {
+  private groupProductsByCategory(products: StylePortfolioData['products']): Record<string, StylePortfolioData['products']> {
+    const grouped: Record<string, StylePortfolioData['products']> = {};
+
+    products.forEach(product => {
+      const category = product.category || 'Fashion';
+      if (!grouped[category]) {
+        grouped[category] = [];
+      }
+      grouped[category].push(product);
+    });
+
+    return grouped;
+  }
+
+  private generateCategorySection(products: StylePortfolioData['products'], category: string): string {
+    if (products.length === 0) {
+      return `No ${category.toLowerCase()} items found in your current selection.
+      
+Try refining your search or exploring different brands to find perfect ${category.toLowerCase()} pieces for your ${this.currentAesthetics} aesthetic.`;
+    }
+
+    const categoryIntro = this.getCategoryIntro(category, products.length);
+    const productList = products.map(product => this.formatProductForDocument(product)).join('\n');
+
+    return `${categoryIntro}\n\n${productList}`;
+  }
+
+  private getCategoryIntro(category: string, count: number): string {
+    const intros = {
+      'Clothing': `${count} carefully selected clothing pieces that embody your style:`,
+      'Accessories': `${count} accessories to complete and elevate your looks:`,
+      'Footwear': `${count} footwear options that combine style and comfort:`,
+      'Home Decor': `${count} home decor items that extend your aesthetic to your living space:`
+    };
+
+    return intros[category as keyof typeof intros] || `${count} ${category.toLowerCase()} items curated for you:`;
+  }
+
+  private formatProductForDocument(product: StylePortfolioData['products'][0]): string {
+    const title = product.title.length > 100
+      ? product.title.substring(0, 97) + '...'
+      : product.title;
+
+    const price = product.price ? `$${product.price.toFixed(2)}` : 'Price varies';
+    const originalPrice = product.retail_price && product.retail_price > product.price
+      ? ` (Originally $${product.retail_price.toFixed(2)})`
+      : '';
+
+    const rating = product.rating ? `★${product.rating.toFixed(1)}` : '';
+    const reviews = product.reviews ? `(${product.reviews.toLocaleString()} reviews)` : '';
+    const brand = product.brand ? product.brand : '';
+    const prime = product.prime ? '📦 Prime Eligible' : '';
+
+    // Enhanced product details
+    const features = [];
+    if (brand) features.push(`Brand: ${brand}`);
+    if (rating && reviews) features.push(`Rating: ${rating} ${reviews}`);
+    if (prime) features.push(prime);
+
+    return `
+▼ ${title}
+   ${features.join(' | ')}
+   Price: ${price}${originalPrice}
+   Category: ${product.category || 'Fashion'}
+   🛒 Shop Now: ${product.url}
+   
+───────────────────────────────────────────────────────────────────────────
+`;
+  }
+
+  private calculateAveragePrice(products: StylePortfolioData['products']): string {
+    const validPrices = products.filter(p => p.price > 0).map(p => p.price);
+    if (validPrices.length === 0) return 'Price varies';
+
+    const average = validPrices.reduce((sum, price) => sum + price, 0) / validPrices.length;
+    return `${average.toFixed(2)}`;
+  }
+
+  async getTemplate(templateName: string): Promise<string> {
     try {
-      console.log('Loading Word template from assets...');
-      const response = await fetch('/assets/templates/style-guide-template.docx');
+      console.log(`Loading ${templateName} from assets...`);
+      const response = await fetch(`/assets/templates/${templateName}`);
 
       if (!response.ok) {
         throw new Error(`Template file not found: ${response.status} ${response.statusText}`);
@@ -677,25 +707,26 @@ export class FoxitService {
 
       const arrayBuffer = await response.arrayBuffer();
       const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-      console.log('Successfully loaded Word template from assets');
+      console.log(`Successfully loaded ${templateName} from assets`);
       return base64;
 
     } catch (error) {
-      console.error('Failed to load template from assets:', error);
+      console.error(`Failed to load ${templateName} from assets:`, error);
 
-      // Fallback to environment variable
-      const templateFromEnv = import.meta.env.VITE_STYLE_TEMPLATE_BASE64;
-      if (templateFromEnv) {
-        console.log('Using template from environment variable');
-        return templateFromEnv;
+      // Fallback to environment variable for main template only
+      if (templateName === 'comprehensive-style-guide-template.docx') {
+        const templateFromEnv = import.meta.env.VITE_STYLE_TEMPLATE_BASE64;
+        if (templateFromEnv) {
+          console.log('Using comprehensive template from environment variable');
+          return templateFromEnv;
+        }
       }
 
-      // Final error if no template is available
       throw new Error(`
-      Template Loading Failed: Could not load style-guide-template.docx
+      Template Loading Failed: Could not load ${templateName}
       
       Please ensure:
-      1. File exists at: public/assets/templates/style-guide-template.docx
+      1. File exists at: public/assets/templates/${templateName}
       2. File is a valid Word document with Foxit text tags
       3. Development server has access to the public folder
       
@@ -704,100 +735,400 @@ export class FoxitService {
     }
   }
 
-  /**
- * Generate styling tips based on aesthetic preferences - Enhanced
- */
+  async createAdditionalContent(
+    option: { id: string; name: string; description: string; additionalContent: string },
+    portfolioData: StylePortfolioData
+  ): Promise<{ documentId: string } | null> {
+    try {
+      console.log(`Creating additional content for ${option.id}...`);
+
+      // Get additional content template based on option type
+      const templateBase64 = await this.getAdditionalContentTemplate(option.id);
+
+      // Prepare data for additional content
+      const additionalData = this.prepareAdditionalContentData(option, portfolioData);
+
+      // Generate additional document
+      const generatedDoc = await this.generateDocumentFromTemplate(
+        templateBase64,
+        additionalData,
+        'pdf'
+      );
+
+      // Upload generated document
+      const byteCharacters = atob(generatedDoc.base64FileString);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/pdf' });
+
+      const uploadResult = await this.uploadDocument(blob, `additional-${option.id}.pdf`);
+
+      return { documentId: uploadResult.documentId };
+
+    } catch (error) {
+      console.error(`Failed to create additional content for ${option.id}:`, error);
+      return null;
+    }
+  }
+
+  private async getAdditionalContentTemplate(optionId: string): Promise<string> {
+    try {
+      // Map option IDs to specific templates
+      const templateMap: { [key: string]: string } = {
+        'trend-report': 'trend-report-template.docx',
+        'care-guide': 'care-guide-template.docx',
+        'size-fit': 'size-fit-template.docx',
+        'master-collection': 'additional-content-template.docx'
+      };
+
+      const templateName = templateMap[optionId] || 'additional-content-template.docx';
+      return await this.getTemplate(templateName);
+
+    } catch (error) {
+      console.error(`Failed to load template for ${optionId}:`, error);
+      // Fallback to base additional content template
+      return await this.getTemplate('additional-content-template.docx');
+    }
+  }
+
+  private prepareAdditionalContentData(
+    option: { id: string; name: string; description: string; additionalContent: string },
+    portfolioData: StylePortfolioData
+  ): Record<string, unknown> {
+    const baseData = {
+      userName: portfolioData.metadata.userName || 'Style Enthusiast',
+      createdDate: new Date().toLocaleDateString(),
+      aesthetics: portfolioData.userPreferences.aesthetics.join(' + '),
+      season: portfolioData.metadata.season || 'Current Season',
+      colorPalette: this.generateColorPalette(portfolioData.userPreferences.aesthetics)
+        .slice(0, 6)
+        .join(' • ')
+    };
+
+    switch (option.id) {
+      case 'trend-report':
+        return {
+          ...baseData,
+          trendTitle: `${portfolioData.metadata.season} ${new Date().getFullYear()} Trends`,
+          keyTrends: this.generateTrendContent(portfolioData.userPreferences.aesthetics),
+          colorTrends: this.generateColorTrends(portfolioData.metadata.season || 'Spring'),
+          keyPieces: this.generateKeyPieces(portfolioData.userPreferences.aesthetics),
+          contentTitle: 'Seasonal Trend Report',
+          mainContent: this.generateTrendContent(portfolioData.userPreferences.aesthetics),
+          integrationTips: this.generateTrendIntegrationTips(portfolioData.userPreferences.aesthetics)
+        };
+
+      case 'care-guide':
+        return {
+          ...baseData,
+          fabricCare: this.generateFabricCareGuide(),
+          stainRemoval: this.generateStainRemovalTips(),
+          storageTips: this.generateStorageTips(),
+          contentTitle: 'Fabric Care & Maintenance Guide',
+          mainContent: this.generateFabricCareGuide(),
+          integrationTips: this.generateCareIntegrationTips(portfolioData.userPreferences.aesthetics)
+        };
+
+      case 'size-fit':
+        return {
+          ...baseData,
+          sizingCharts: this.generateSizingCharts(),
+          fitTips: this.generateFitTips(portfolioData.userPreferences.aesthetics),
+          measurementGuide: this.generateMeasurementGuide(),
+          contentTitle: 'Size & Fit Guide',
+          mainContent: this.generateSizingCharts(),
+          integrationTips: this.generateSizeIntegrationTips(portfolioData.userPreferences.aesthetics)
+        };
+
+      case 'master-collection':
+        return {
+          ...baseData,
+          allContent: 'Complete package with trends, care instructions, sizing, and advanced styling',
+          contentTitle: 'Master Style Collection',
+          mainContent: 'This comprehensive package includes seasonal trends, care instructions, sizing guides, and advanced styling techniques.',
+          integrationTips: this.generateMasterIntegrationTips(portfolioData.userPreferences.aesthetics)
+        };
+
+      default:
+        return {
+          ...baseData,
+          contentTitle: option.name,
+          mainContent: option.additionalContent,
+          integrationTips: this.generateGeneralIntegrationTips(portfolioData.userPreferences.aesthetics)
+        };
+    }
+  }
+
+  private generateTrendContent(userAesthetics: string[]): string {
+    return userAesthetics.map(aesthetic => {
+      switch (aesthetic.toLowerCase()) {
+        case 'cottagecore':
+          return '• Romantic florals and prairie dresses trending\n• Natural fabrics gaining popularity\n• Vintage-inspired details in high demand';
+        case 'minimalist':
+          return '• Clean lines and neutral tones dominating\n• Quality basics over trendy pieces\n• Sustainable fashion focus increasing';
+        case 'dark academia':
+          return '• Tweed and wool textures resurging\n• Vintage library aesthetics popular\n• Rich earth tones in high demand';
+        case 'sleek':
+          return '• Modern architectural silhouettes trending\n• High-tech fabrics gaining traction\n• Monochromatic styling popular';
+        case 'cute':
+          return '• Soft pastels and playful details trending\n• Kawaii-inspired accessories popular\n• Comfort-first styling on the rise';
+        default:
+          return `• ${aesthetic} aesthetic gaining mainstream appeal\n• Focus on authentic personal expression\n• Quality over quantity trend continues`;
+      }
+    }).join('\n\n');
+  }
+
+  private generateColorTrends(season: string): string {
+    const seasonalColors = {
+      'Spring': 'Soft pastels, sage green, warm coral, butter yellow',
+      'Summer': 'Ocean blues, coral pink, sandy beige, sunset orange',
+      'Fall': 'Rich burgundy, forest green, warm browns, golden yellow',
+      'Winter': 'Deep navy, emerald green, berry tones, classic black'
+    };
+    return seasonalColors[season as keyof typeof seasonalColors] || 'Classic neutrals with seasonal accent colors';
+  }
+
+  private generateKeyPieces(userAesthetics: string[]): string {
+    return userAesthetics.map(aesthetic => {
+      switch (aesthetic.toLowerCase()) {
+        case 'cottagecore':
+          return '• Midi prairie skirts\n• Puff sleeve blouses\n• Wicker accessories\n• Mary Jane shoes';
+        case 'minimalist':
+          return '• Quality white button-down\n• Well-fitted trousers\n• Classic trench coat\n• Leather loafers';
+        case 'dark academia':
+          return '• Wool blazers\n• Vintage leather bags\n• Oxford shoes\n• Plaid scarves';
+        case 'sleek':
+          return '• Structured blazers\n• Streamlined pants\n• Modern sneakers\n• Geometric jewelry';
+        case 'cute':
+          return '• A-line dresses\n• Cardigans with details\n• Canvas sneakers\n• Delicate jewelry';
+        default:
+          return '• Versatile blazer\n• Quality jeans\n• Classic white tee\n• Comfortable sneakers';
+      }
+    }).join('\n\n');
+  }
+
+  private generateFabricCareGuide(): string {
+    return `Cotton: Machine wash cool, tumble dry low
+Linen: Hand wash or gentle cycle, air dry
+Wool: Dry clean or hand wash cool
+Silk: Hand wash or dry clean only
+Denim: Wash inside out, cold water
+Cashmere: Hand wash with specialized detergent
+Leather: Professional cleaning recommended
+Synthetic blends: Follow garment care labels`;
+  }
+
+  private generateStainRemovalTips(): string {
+    return `Oil stains: Dish soap and warm water
+Blood: Cold water and hydrogen peroxide
+Sweat: White vinegar and baking soda
+Makeup: Makeup remover then regular wash
+Grass: Rubbing alcohol then wash
+Wine: Salt immediately, then club soda
+Coffee: Cold water rinse, then wash
+Ink: Rubbing alcohol on cotton ball`;
+  }
+
+  private generateStorageTips(): string {
+    return `Hang delicate items and structured pieces
+Fold knitwear to prevent stretching
+Use cedar blocks for moths
+Store shoes with trees or stuffing
+Keep accessories organized in compartments
+Use breathable garment bags
+Avoid plastic bags for long-term storage
+Clean items before seasonal storage`;
+  }
+
+  private generateSizingCharts(): string {
+    return `US sizing varies by brand - always check individual size charts
+European sizes run differently than US
+Consult brand-specific sizing guides
+Consider fabric stretch when choosing size
+Asian brands typically run smaller
+Vintage sizing differs from modern standards
+When in doubt, size up for comfort
+Check return policies before purchasing`;
+  }
+
+  private generateFitTips(userAesthetics: string[]): string {
+    return userAesthetics.map(aesthetic => {
+      switch (aesthetic.toLowerCase()) {
+        case 'cottagecore':
+          return 'Embrace relaxed, flowing fits\nHigh-waisted bottoms are flattering\nLayer pieces for depth and interest';
+        case 'minimalist':
+          return 'Focus on clean, tailored silhouettes\nEnsure proper shoulder fit\nAvoid excess fabric or tight fits';
+        case 'dark academia':
+          return 'Structured fits with classic proportions\nEmphasize waist definition\nLayer for scholarly sophistication';
+        case 'sleek':
+          return 'Modern, streamlined silhouettes\nClean lines without bulk\nTailored fits that skim the body';
+        case 'cute':
+          return 'Comfortable fits that flatter\nHigh-waisted styles work well\nA-line silhouettes are universally flattering';
+        default:
+          return 'Choose fits that flatter your body type\nEnsure comfort and ease of movement\nTailor key pieces for perfect fit';
+      }
+    }).join('\n\n');
+  }
+
+  private generateMeasurementGuide(): string {
+    return `Bust: Measure around fullest part
+Waist: Measure at natural waistline
+Hips: Measure around fullest part
+Inseam: Measure from crotch to ankle
+Shoulder: Measure from shoulder point to shoulder point
+Arm length: Measure from shoulder to wrist
+Chest: Measure around chest at underarm level
+Thigh: Measure around fullest part of thigh`;
+  }
+
+  private generateTrendIntegrationTips(aesthetics: string[]): string {
+    return `To integrate current trends with your ${aesthetics.join(' + ')} aesthetic:
+• Start with small trend pieces that complement your core style
+• Choose trends in colors from your established palette
+• Focus on trends that enhance rather than overwhelm your look
+• Invest in trend-conscious accessories rather than major wardrobe overhauls
+• Remember that personal style should evolve, not be replaced by trends`;
+  }
+
+  private generateCareIntegrationTips(aesthetics: string[]): string {
+    return `Caring for your ${aesthetics.join(' + ')} wardrobe:
+• Invest in proper care tools for your key pieces
+• Follow fabric care instructions to maintain quality
+• Store seasonal items properly to extend their life
+• Address stains and damage promptly
+• Consider professional cleaning for investment pieces`;
+  }
+
+  private generateSizeIntegrationTips(aesthetics: string[]): string {
+    return `Achieving the perfect fit for your ${aesthetics.join(' + ')} style:
+• Understand how different brands fit your body
+• Don't be afraid to size up for comfort
+• Consider alterations for key investment pieces
+• Pay attention to fabric content and stretch
+• Build relationships with trusted tailors for complex adjustments`;
+  }
+
+  private generateMasterIntegrationTips(aesthetics: string[]): string {
+    return `Mastering your complete ${aesthetics.join(' + ')} style system:
+• Use trends strategically to keep your look current
+• Maintain your wardrobe properly to protect your investments
+• Ensure proper fit across all your pieces
+• Build a cohesive system that works across seasons
+• Remember that great style is about how everything works together`;
+  }
+
+  private generateGeneralIntegrationTips(aesthetics: string[]): string {
+    return `Integrating new elements with your ${aesthetics.join(' + ')} style:
+• Stay true to your core aesthetic while allowing for growth
+• Choose additions that enhance your existing wardrobe
+• Focus on versatile pieces that work multiple ways
+• Consider how new items fit into your lifestyle
+• Build gradually rather than completely overhauling your style`;
+  }
+
   private generateStylingTips(aesthetics: string[], lifestyle: string): string[] {
     const tipDatabase: { [key: string]: string[] } = {
       minimalist: [
-        'Focus on clean lines and neutral colors',
-        'Invest in quality basics that mix and match',
-        'Choose pieces with simple, elegant silhouettes',
-        'Less is more - select versatile, timeless items'
+        'Focus on clean lines and neutral colors for timeless elegance',
+        'Invest in quality basics that mix and match effortlessly',
+        'Choose pieces with simple, elegant silhouettes that flatter your form',
+        'Less is more - select versatile, timeless items over trendy pieces',
+        'Stick to a cohesive color palette of 3-5 colors maximum',
+        'Pay attention to fabric quality and construction details'
       ],
       cottagecore: [
-        'Layer delicate fabrics and textures',
-        'Embrace floral patterns and earthy tones',
-        'Mix vintage pieces with modern comfort',
-        'Choose natural fabrics like cotton and linen'
+        'Layer delicate fabrics and textures for romantic depth',
+        'Embrace floral patterns, gingham, and vintage-inspired prints',
+        'Mix antique and vintage pieces with modern comfort',
+        'Choose natural fabrics like cotton, linen, and wool',
+        'Incorporate earthy tones and soft, muted colors',
+        'Add feminine touches like ruffles, puff sleeves, and lace details'
       ],
       'dark academia': [
-        'Layer blazers over comfortable sweaters',
-        'Incorporate rich textures like wool and tweed',
-        'Focus on earth tones and deep, scholarly colors',
-        'Add vintage accessories for authentic appeal'
+        'Layer blazers over comfortable sweaters for scholarly sophistication',
+        'Incorporate rich textures like wool, tweed, and corduroy',
+        'Focus on earth tones and deep, scholarly colors like burgundy and forest green',
+        'Add vintage accessories for authentic intellectual appeal',
+        'Choose classic patterns like plaid, herringbone, and houndstooth',
+        'Invest in quality outerwear like wool coats and leather jackets'
       ],
       sleek: [
-        'Choose streamlined silhouettes and modern cuts',
-        'Stick to a cohesive color palette',
-        'Invest in quality materials with smooth finishes',
-        'Keep accessories minimal and functional'
+        'Choose streamlined silhouettes and modern cuts for contemporary appeal',
+        'Stick to a cohesive color palette with strategic pops of color',
+        'Invest in quality materials with smooth finishes and clean lines',
+        'Keep accessories minimal and functional yet stylish',
+        'Focus on fit - tailoring makes all the difference',
+        'Choose pieces with architectural elements and interesting details'
       ],
       cute: [
-        'Add playful details and soft textures',
-        'Mix feminine touches with practical pieces',
-        'Use pastel colors and gentle patterns',
-        'Choose comfortable fits that flatter your shape'
+        'Add playful details and soft textures for charm and whimsy',
+        'Mix feminine touches with practical, comfortable pieces',
+        'Use pastel colors and gentle patterns for a soft aesthetic',
+        'Choose comfortable fits that flatter your natural shape',
+        'Incorporate fun accessories like bows, ribbons, and delicate jewelry',
+        'Balance sweet details with more mature pieces for sophistication'
       ],
       casual: [
-        'Prioritize comfort without sacrificing style',
-        'Mix and match versatile basics',
-        'Add personality with fun accessories',
-        'Choose breathable, easy-care fabrics'
+        'Prioritize comfort without sacrificing style or put-togetherness',
+        'Mix and match versatile basics for effortless everyday looks',
+        'Add personality with fun accessories, shoes, and statement pieces',
+        'Choose breathable, easy-care fabrics for practical daily wear',
+        'Focus on pieces that work for multiple occasions and activities',
+        'Invest in quality basics like great jeans, comfortable shoes, and versatile tops'
       ],
       professional: [
-        'Invest in well-tailored, classic pieces',
-        'Stick to sophisticated color combinations',
-        'Pay attention to fit and quality details',
-        'Choose versatile pieces that work for multiple occasions'
+        'Invest in well-tailored, classic pieces that command respect',
+        'Stick to sophisticated color combinations and timeless patterns',
+        'Pay attention to fit and quality details like buttons and seams',
+        'Choose versatile pieces that work for multiple professional occasions',
+        'Build a capsule wardrobe of mix-and-match essentials',
+        'Keep accessories polished and appropriate for your industry'
       ]
     };
 
     const tips: string[] = [];
 
-    // Add aesthetic-specific tips
     aesthetics.forEach(aesthetic => {
       const aestheticKey = aesthetic.toLowerCase();
       if (tipDatabase[aestheticKey]) {
-        tips.push(...tipDatabase[aestheticKey].slice(0, 2)); // Max 2 tips per aesthetic
+        tips.push(...tipDatabase[aestheticKey].slice(0, 3));
       }
     });
 
-    // Add lifestyle-specific tips
     const lifestyleKey = lifestyle.toLowerCase();
     if (tipDatabase[lifestyleKey]) {
       tips.push(...tipDatabase[lifestyleKey].slice(0, 2));
     }
 
-    // Generic styling tips if no specific ones found
     if (tips.length === 0) {
       tips.push(
-        'Choose pieces that reflect your personal style',
-        'Invest in quality over quantity',
-        'Mix textures and patterns thoughtfully',
-        'Ensure proper fit for the most flattering look'
+        'Choose pieces that reflect your personal style and make you feel confident',
+        'Invest in quality over quantity for a more sustainable wardrobe',
+        'Mix textures and patterns thoughtfully for visual interest',
+        'Ensure proper fit for the most flattering and comfortable look',
+        'Build a cohesive color palette that works across seasons',
+        'Focus on versatile pieces that can be dressed up or down'
       );
     }
 
-    // Return max 6 tips to avoid overwhelming the document
-    return [...new Set(tips)].slice(0, 6);
+    return [...new Set(tips)].slice(0, 8);
   }
 
-  /**
- * Generate color palette based on aesthetics - Enhanced
- */
   private generateColorPalette(aesthetics: string[]): string[] {
     const colorPalettes: { [key: string]: string[] } = {
-      minimalist: ['White', 'Light Gray', 'Charcoal', 'Black', 'Beige', 'Navy'],
-      cottagecore: ['Cream', 'Sage Green', 'Dusty Rose', 'Warm Brown', 'Lavender', 'Soft Yellow'],
-      'dark academia': ['Deep Brown', 'Forest Green', 'Burgundy', 'Cream', 'Navy', 'Charcoal'],
-      sleek: ['Black', 'White', 'Silver', 'Deep Navy', 'Charcoal', 'Cool Gray'],
-      cute: ['Soft Pink', 'Lavender', 'Mint Green', 'Cream', 'Peach', 'Light Blue'],
-      bohemian: ['Terracotta', 'Mustard', 'Deep Teal', 'Rust', 'Sage', 'Cream'],
-      modern: ['Black', 'White', 'Bold Red', 'Electric Blue', 'Bright Yellow', 'Deep Purple']
+      minimalist: ['White', 'Light Gray', 'Charcoal', 'Black', 'Beige', 'Navy', 'Camel', 'Cream'],
+      cottagecore: ['Cream', 'Sage Green', 'Dusty Rose', 'Warm Brown', 'Lavender', 'Soft Yellow', 'Blush Pink', 'Sage'],
+      'dark academia': ['Deep Brown', 'Forest Green', 'Burgundy', 'Cream', 'Navy', 'Charcoal', 'Wine', 'Camel'],
+      sleek: ['Black', 'White', 'Silver', 'Deep Navy', 'Charcoal', 'Cool Gray', 'Ice Blue', 'Platinum'],
+      cute: ['Soft Pink', 'Lavender', 'Mint Green', 'Cream', 'Peach', 'Light Blue', 'Powder Blue', 'Rose Gold'],
+      bohemian: ['Terracotta', 'Mustard', 'Deep Teal', 'Rust', 'Sage', 'Cream', 'Burnt Orange', 'Olive'],
+      modern: ['Black', 'White', 'Bold Red', 'Electric Blue', 'Bright Yellow', 'Deep Purple', 'Hot Pink', 'Lime Green']
     };
 
-    let palette = ['Black', 'White', 'Gray']; // Base neutral palette
+    let palette = ['Black', 'White', 'Gray'];
 
     aesthetics.forEach(aesthetic => {
       const aestheticKey = aesthetic.toLowerCase();
@@ -806,14 +1137,9 @@ export class FoxitService {
       }
     });
 
-    // Remove duplicates and return unique colors
-    return [...new Set(palette)].slice(0, 8);
+    return [...new Set(palette)].slice(0, 10);
   }
 
-
-  /**
- * Check the status of a processing task with corrected URL generation
- */
   async checkTaskStatus(taskId: string): Promise<TaskStatusResponse> {
     try {
       const url = `${this.pdfServicesUrl}/api/tasks/${taskId}`;
@@ -849,13 +1175,9 @@ export class FoxitService {
       const result = await response.json();
       console.log(`Task ${taskId} full response:`, result);
 
-      // Map Foxit's response format to our expected format
       const mappedStatus = this.mapFoxitStatusToOurFormat(result.status || result.state);
-
-      // Handle the resultDocumentId from Foxit's response
       const documentId = result.resultDocumentId || result.documentId || result.outputDocumentId;
 
-      // Log what we found for debugging
       console.log(`Task ${taskId} parsed:`, {
         status: mappedStatus,
         documentId,
@@ -863,11 +1185,9 @@ export class FoxitService {
         allFields: Object.keys(result)
       });
 
-      // Generate download URL correctly - just pass the document ID, not the full path
       let downloadUrl: string | undefined;
       if (mappedStatus === 'completed' && documentId) {
-        // FIXED: Pass only the document ID, not the full URL path
-        downloadUrl = documentId; // Just the document ID
+        downloadUrl = documentId;
         console.log(`Will use document ID for download: ${documentId}`);
       }
 
@@ -875,7 +1195,7 @@ export class FoxitService {
         taskId: result.taskId || taskId,
         status: mappedStatus,
         message: result.message || `Task is ${mappedStatus}`,
-        downloadUrl: downloadUrl, // This will be the document ID
+        downloadUrl: downloadUrl,
         documentId: documentId
       };
 
@@ -890,9 +1210,6 @@ export class FoxitService {
     }
   }
 
-  /**
-   * Helper method to map Foxit's status values to our expected format
-   */
   private mapFoxitStatusToOurFormat(foxitStatus: string): 'processing' | 'completed' | 'failed' {
     switch (foxitStatus?.toUpperCase()) {
       case 'PENDING':

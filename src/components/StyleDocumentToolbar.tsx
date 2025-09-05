@@ -7,8 +7,7 @@ import {
   Link, 
   Download, 
   Loader2, 
-  CheckCircle, 
-  XCircle,
+  CheckCircle,
   Instagram,
   Facebook
 } from 'lucide-react';
@@ -412,22 +411,25 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
   };
 
   const getAdditionalContentTemplate = async (optionId: string): Promise<string> => {
-    // In a real implementation, you'd have different templates for each option
-    // For now, we'll use a simplified approach
-    const templateResponse = await fetch(`/assets/templates/${optionId}-template.docx`);
-    
-    if (!templateResponse.ok) {
-      // Fallback to a generic additional content template
-      const fallbackResponse = await fetch('/assets/templates/additional-content-template.docx');
-      if (!fallbackResponse.ok) {
-        throw new Error(`Template not found for ${optionId}`);
+    try {
+      const templateResponse = await fetch(`/assets/templates/${optionId}-template.docx`);
+      
+      if (!templateResponse.ok) {
+        // Fallback to a generic additional content template
+        const fallbackResponse = await fetch('/assets/templates/additional-content-template.docx');
+        if (!fallbackResponse.ok) {
+          throw new Error(`Template not found for ${optionId}`);
+        }
+        const arrayBuffer = await fallbackResponse.arrayBuffer();
+        return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       }
-      const arrayBuffer = await fallbackResponse.arrayBuffer();
+      
+      const arrayBuffer = await templateResponse.arrayBuffer();
       return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    } catch (error) {
+      console.error(`Failed to load template for ${optionId}:`, error);
+      throw error;
     }
-    
-    const arrayBuffer = await templateResponse.arrayBuffer();
-    return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
   };
 
   const prepareAdditionalContentData = (
@@ -454,9 +456,9 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
       case 'care-guide':
         return {
           ...baseData,
-          fabricCare: generateFabricCareGuide(portfolioData.userPreferences.aesthetics),
+          fabricCare: generateFabricCareGuide(),
           stainRemoval: generateStainRemovalTips(),
-          storageeTips: generateStorageTips()
+          storageTips: generateStorageTips()
         };
         
       case 'size-fit':
@@ -478,9 +480,8 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     }
   };
 
-  const generateTrendContent = (aesthetics: string[]): string => {
-    // Generate trend content based on aesthetics
-    return aesthetics.map(aesthetic => {
+  const generateTrendContent = (userAesthetics: string[]): string => {
+    return userAesthetics.map(aesthetic => {
       switch (aesthetic.toLowerCase()) {
         case 'cottagecore':
           return '• Romantic florals and prairie dresses trending\n• Natural fabrics gaining popularity\n• Vintage-inspired details in high demand';
@@ -502,8 +503,8 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     return seasonalColors[season as keyof typeof seasonalColors] || 'Classic neutrals with seasonal accent colors';
   };
 
-  const generateKeyPieces = (aesthetics: string[]): string => {
-    return aesthetics.map(aesthetic => {
+  const generateKeyPieces = (userAesthetics: string[]): string => {
+    return userAesthetics.map(aesthetic => {
       switch (aesthetic.toLowerCase()) {
         case 'cottagecore':
           return '• Midi prairie skirts\n• Puff sleeve blouses\n• Wicker accessories\n• Mary Jane shoes';
@@ -515,7 +516,7 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     }).join('\n\n');
   };
 
-  const generateFabricCareGuide = (aesthetics: string[]): string => {
+  const generateFabricCareGuide = (): string => {
     return 'Cotton: Machine wash cool, tumble dry low\nLinen: Hand wash or gentle cycle, air dry\nWool: Dry clean or hand wash cool\nSilk: Hand wash or dry clean only\nDenim: Wash inside out, cold water';
   };
 
@@ -531,8 +532,8 @@ const StyleDocumentToolbar: React.FC<StyleDocumentToolbarProps> = ({
     return 'US sizing varies by brand - always check individual size charts\nEuropean sizes run differently than US\nConsult brand-specific sizing guides\nConsider fabric stretch when choosing size';
   };
 
-  const generateFitTips = (aesthetics: string[]): string => {
-    return aesthetics.map(aesthetic => {
+  const generateFitTips = (userAesthetics: string[]): string => {
+    return userAesthetics.map(aesthetic => {
       switch (aesthetic.toLowerCase()) {
         case 'cottagecore':
           return 'Embrace relaxed, flowing fits\nHigh-waisted bottoms are flattering\nLayer pieces for depth and interest';
