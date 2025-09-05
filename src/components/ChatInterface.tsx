@@ -1,13 +1,12 @@
 // src/components/ChatInterface.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, ShoppingBag, FileText, AlertCircle } from 'lucide-react';
+import { Send, Sparkles, ShoppingBag, AlertCircle } from 'lucide-react';
 import { OpenAIService, AnalysisResponse } from '../services/openaiService';
 import { AmazonService, AmazonProduct } from '../services/amazonService';
 import { FoxitService, StylePortfolioData } from '../services/foxitService';
 import ProductCard from './ProductCard';
-import DocumentPreview from './DocumentPreview';
+import StyleDocumentToolbar from './StyleDocumentToolbar';
 
-// Updated interface to match the real Foxit API structure
 interface StyleDocuments {
   mainDocument?: string; // base64 string
   documentId?: string;
@@ -27,10 +26,10 @@ interface Message {
   timestamp: Date;
   products?: AmazonProduct[];
   styleDocuments?: StyleDocuments;
+  portfolioData?: StylePortfolioData; // Add portfolio data for toolbar access
 }
 
 const ChatInterface: React.FC = () => {
-  // Removed the default welcome message from initial state
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -66,10 +65,8 @@ const ChatInterface: React.FC = () => {
     setDocumentError(null);
 
     try {
-      // Analyze style preferences with OpenAI
       const styleAnalysis = await openaiService.analyzeStylePreferences(inputValue);
 
-      // Search for products if style analysis indicates specific needs
       let products: AmazonProduct[] = [];
       if (styleAnalysis.recommendedCategories && styleAnalysis.recommendedCategories.length > 0) {
         const searchKeywords = [
@@ -83,7 +80,6 @@ const ChatInterface: React.FC = () => {
         }
       }
 
-      // Generate AI response
       const conversationHistory = messages.map(msg => ({
         role: msg.role,
         content: msg.content
@@ -144,7 +140,6 @@ const ChatInterface: React.FC = () => {
     try {
       console.log('Starting document generation process...');
 
-      // Prepare portfolio data with better validation
       const portfolioData: StylePortfolioData = {
         userPreferences: {
           aesthetics: styleAnalysis.styleAnalysis.aesthetics || ['modern'],
@@ -158,7 +153,13 @@ const ChatInterface: React.FC = () => {
           url: product.url,
           image: product.image,
           price: product.price,
-          category: inferProductCategory(product.title)
+          category: inferProductCategory(product.title),
+          // Include additional product details
+          brand: product.brand || product.manufacturer || '',
+          rating: product.rating || 0,
+          reviews: product.reviews || 0,
+          prime: product.prime || false,
+          retail_price: product.retail_price || product.price
         })),
         metadata: {
           userName: 'Valued Customer',
@@ -174,7 +175,6 @@ const ChatInterface: React.FC = () => {
         lifestyle: portfolioData.userPreferences.lifestyle
       });
 
-      // Generate style portfolio using the updated Foxit service
       const stylePortfolio = await foxitService.createStylePortfolio(portfolioData);
 
       console.log('Style portfolio generated successfully:', {
@@ -183,7 +183,6 @@ const ChatInterface: React.FC = () => {
         processedVersionsCount: stylePortfolio.processedVersions.length
       });
 
-      // Create the document structure
       const styleDocuments: StyleDocuments = {
         mainDocument: stylePortfolio.mainDocument,
         documentId: stylePortfolio.documentId,
@@ -193,10 +192,14 @@ const ChatInterface: React.FC = () => {
         }))
       };
 
-      // Update the message with generated documents
+      // Update the message with generated documents AND portfolio data
       setMessages(prev => prev.map(msg =>
         msg.id === messageId
-          ? { ...msg, styleDocuments }
+          ? { 
+              ...msg, 
+              styleDocuments,
+              portfolioData // Store portfolio data for toolbar access
+            }
           : msg
       ));
 
@@ -204,16 +207,15 @@ const ChatInterface: React.FC = () => {
       const documentMessage: Message = {
         id: (Date.now() + 2).toString(),
         role: 'assistant',
-        content: `Perfect! I've created your personalized style documentation based on your ${portfolioData.userPreferences.aesthetics.join(' + ')} aesthetic. Here's what I've generated:\n\n✨ **Complete Style Guide** - Your comprehensive style portfolio (ready now)\n📱 **Compressed Version** - Smaller file for easy sharing (processing...)\n📸 **Social Media Images** - Perfect for sharing your style inspiration (processing...)\n⚡ **Quick Reference Pages** - Key pages for fast outfit decisions (processing...)\n\nYour main style guide includes ${portfolioData.products.length} curated products, personalized styling tips, and a custom color palette. Download it now to start building your perfect wardrobe!`,
+        content: `Perfect! I've created your personalized style documentation based on your ${portfolioData.userPreferences.aesthetics.join(' + ')} aesthetic. Use the toolbar below to access different document formats and sharing options.`,
         timestamp: new Date(),
-        styleDocuments
       };
 
       setMessages(prev => [...prev, documentMessage]);
 
       // Poll for processing status updates if we have processed versions
       if (styleDocuments.processedVersions && styleDocuments.processedVersions.length > 0) {
-        await pollProcessingStatus(styleDocuments, documentMessage.id);
+        await pollProcessingStatus(styleDocuments, messageId);
       }
 
     } catch (error) {
@@ -221,7 +223,6 @@ const ChatInterface: React.FC = () => {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setDocumentError(errorMessage);
 
-      // Provide specific error feedback based on error type
       let userFriendlyMessage = '';
       if (errorMessage.includes('Template Loading Failed')) {
         userFriendlyMessage = `I found perfect products for your style, but I'm having trouble accessing the document template. This is likely a temporary technical issue.\n\n**What you can do:**\n• The curated products above are still perfectly matched to your preferences\n• Try refreshing the page and asking again\n• The issue should resolve shortly\n\n**Your products are ready** - I can continue helping you with more recommendations while this gets fixed!`;
@@ -243,7 +244,6 @@ const ChatInterface: React.FC = () => {
     }
   };
 
-  // Update the pollProcessingStatus method:
   const pollProcessingStatus = async (documents: StyleDocuments, messageId: string) => {
     if (!documents.processedVersions) return;
 
@@ -254,7 +254,6 @@ const ChatInterface: React.FC = () => {
           documents.processedVersions!.map(async (version) => {
             if (version.status === 'processing') {
               try {
-                // Use the real Foxit task status API
                 const taskStatus = await foxitService.checkTaskStatus(version.taskId);
 
                 if (taskStatus.status === 'completed') {
@@ -262,7 +261,7 @@ const ChatInterface: React.FC = () => {
                     ...version,
                     status: 'completed' as const,
                     downloadUrl: taskStatus.downloadUrl || `${foxitService.pdfServicesUrl}/api/documents/${taskStatus.documentId}/download`,
-                    size: undefined // Size will be determined when downloaded
+                    size: undefined
                   };
                 } else if (taskStatus.status === 'failed') {
                   return {
@@ -275,7 +274,6 @@ const ChatInterface: React.FC = () => {
                 }
               } catch (error) {
                 console.error(`Task status check failed for ${version.taskId}:`, error);
-                // Keep as processing, will retry on next poll
                 allCompleted = false;
                 return version;
               }
@@ -284,7 +282,6 @@ const ChatInterface: React.FC = () => {
           })
         );
 
-        // Update the message with new status
         setMessages(prev => prev.map(msg =>
           msg.id === messageId
             ? {
@@ -299,77 +296,25 @@ const ChatInterface: React.FC = () => {
 
         if (allCompleted) {
           clearInterval(pollInterval);
-
-          // Count successful completions
-          const completedTasks = updatedVersions.filter(v => v.status === 'completed').length;
-          const failedTasks = updatedVersions.filter(v => v.status === 'failed').length;
-
-          let completionMessage = '';
-          if (completedTasks > 0 && failedTasks === 0) {
-            completionMessage = "All your style documents are now ready! You can download the compressed version for easy sharing, grab the social media images to post your style inspiration, or use the quick reference pages for fast outfit planning.";
-          } else if (completedTasks > 0 && failedTasks > 0) {
-            completionMessage = `${completedTasks} of your style documents are ready for download! ${failedTasks} processing task(s) encountered issues, but your main document and other versions are available.`;
-          } else {
-            completionMessage = "Your main style document is ready! Some additional processing tasks encountered issues, but you can still download and use your personalized style guide.";
-          }
-
-          const completionMsg: Message = {
-            id: (Date.now() + 3).toString(),
-            role: 'assistant',
-            content: completionMessage,
-            timestamp: new Date(),
-          };
-          setMessages(prev => [...prev, completionMsg]);
         }
 
       } catch (error) {
         console.error('Status polling error:', error);
         clearInterval(pollInterval);
-
-        // Add error message but don't fail completely
-        const errorMsg: Message = {
-          id: (Date.now() + 4).toString(),
-          role: 'assistant',
-          content: "I encountered an issue checking the status of your additional document versions. Your main style guide is still available for download, and I'll continue helping you with your style needs!",
-          timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, errorMsg]);
       }
-    }, 5000); // Poll every 5 seconds (reasonable interval)
+    }, 5000);
 
-    // Stop polling after 5 minutes to avoid infinite polling
     setTimeout(() => {
       clearInterval(pollInterval);
-
-      // Check if there are still processing tasks and notify user
-      setMessages(prev => {
-        const currentMsg = prev.find(msg => msg.id === messageId);
-        if (currentMsg?.styleDocuments?.processedVersions?.some(v => v.status === 'processing')) {
-          const timeoutMsg: Message = {
-            id: (Date.now() + 5).toString(),
-            role: 'assistant',
-            content: "Some document processing tasks are taking longer than expected. Your main style guide is ready, and completed versions are available for download. You can continue with your styling or ask me any questions!",
-            timestamp: new Date(),
-          };
-          return [...prev, timeoutMsg];
-        }
-        return prev;
-      });
-    }, 300000); // 5 minutes timeout
+    }, 300000);
   };
 
-  // Update the handleDownloadDocument method in ChatInterface.tsx:
   const handleDownloadDocument = async (documentIdOrUrl: string, filename?: string): Promise<Blob> => {
     try {
       console.log(`Attempting to download: ${documentIdOrUrl}`);
-
-      // Use the Foxit service download method which handles both URLs and document IDs
       return await foxitService.downloadDocument(documentIdOrUrl, filename);
-
     } catch (error) {
       console.error('Download error:', error);
-
-      // Provide user-friendly error message
       let errorMessage = 'Failed to download document';
       if (error instanceof Error) {
         if (error.message.includes('expired')) {
@@ -382,25 +327,7 @@ const ChatInterface: React.FC = () => {
           errorMessage = error.message;
         }
       }
-
       throw new Error(errorMessage);
-    }
-  };
-
-  // Update the handleCheckTaskStatus method:
-  const handleCheckTaskStatus = async (taskId: string) => {
-    try {
-      const taskStatus = await foxitService.checkTaskStatus(taskId);
-      return {
-        status: taskStatus.status,
-        downloadUrl: taskStatus.downloadUrl ||
-          (taskStatus.documentId ? `${foxitService.pdfServicesUrl}/api/documents/${taskStatus.documentId}/download` : undefined)
-      };
-    } catch (error) {
-      console.error('Task status check error:', error);
-      return {
-        status: 'failed' as const
-      };
     }
   };
 
@@ -482,7 +409,6 @@ const ChatInterface: React.FC = () => {
                   <div className="overflow-x-auto scrollbar-hide">
                     <div className="flex space-x-4 pb-4" style={{ width: 'max-content' }}>
                       {message.products.map((product, index) => {
-                        // Add category to product if not present
                         const productWithCategory = {
                           ...product,
                           category: product.category || inferProductCategory(product.title)
@@ -493,17 +419,18 @@ const ChatInterface: React.FC = () => {
                       })}
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Style Documents */}
-              {message.styleDocuments && (
-                <div className="mr-12">
-                  <DocumentPreview
-                    documents={message.styleDocuments}
-                    onDownloadDocument={handleDownloadDocument}
-                    onCheckTaskStatus={handleCheckTaskStatus}
-                  />
+                  {/* Style Document Toolbar - positioned after horizontal scroll */}
+                  {message.styleDocuments && message.portfolioData && (
+                    <div className="mt-4">
+                      <StyleDocumentToolbar
+                        documents={message.styleDocuments}
+                        portfolioData={message.portfolioData}
+                        onDownloadDocument={handleDownloadDocument}
+                        foxitService={foxitService}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -574,7 +501,7 @@ const ChatInterface: React.FC = () => {
           {/* Document Generation Status */}
           {isGeneratingDocuments && (
             <div className="mt-3 flex items-center justify-center space-x-2 text-sm text-gray-400">
-              <FileText className="w-4 h-4" />
+              <Sparkles className="w-4 h-4" />
               <span>Generating personalized style documentation...</span>
             </div>
           )}
