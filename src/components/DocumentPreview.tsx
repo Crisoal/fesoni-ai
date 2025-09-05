@@ -1,11 +1,11 @@
 // src/components/DocumentPreview.tsx
 import React, { useState } from 'react';
-import { 
-  FileText, 
-  Download, 
-  Eye, 
-  Share2, 
-  Smartphone, 
+import {
+  FileText,
+  Download,
+  Eye,
+  Share2,
+  Smartphone,
   Image as ImageIcon,
   X,
   ExternalLink,
@@ -33,10 +33,10 @@ interface DocumentPreviewProps {
   }>;
 }
 
-const DocumentPreview: React.FC<DocumentPreviewProps> = ({ 
-  documents, 
+const DocumentPreview: React.FC<DocumentPreviewProps> = ({
+  documents,
   onDownloadDocument,
-  onCheckTaskStatus 
+  onCheckTaskStatus
 }) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -44,7 +44,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
 
   const handlePreview = (content: string | Blob) => {
     let url: string;
-    
+
     if (typeof content === 'string') {
       // Handle base64 content
       const byteCharacters = atob(content);
@@ -59,7 +59,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
       // Handle blob content
       url = URL.createObjectURL(content);
     }
-    
+
     setPreviewUrl(url);
     setShowPreview(true);
   };
@@ -82,7 +82,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/pdf' });
-      
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -94,13 +94,27 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
     }
   };
 
-  const handleDownloadProcessedDocument = async (taskId: string, type: string) => {
-    if (!onDownloadDocument || !documents.documentId) return;
+  // Update the handleDownloadProcessedDocument function in DocumentPreview.tsx
+  const handleDownloadProcessedDocument = async (taskId: string, type: string, documentIdOrUrl?: string) => {
+    if (!onDownloadDocument) return;
 
     setDownloadingTasks(prev => new Set(prev).add(taskId));
-    
+
     try {
-      const blob = await onDownloadDocument(documents.documentId, `${type}.pdf`);
+      let blob: Blob;
+
+      if (documentIdOrUrl) {
+        // Use the provided document ID or URL
+        console.log(`Downloading using provided ID/URL: ${documentIdOrUrl}`);
+        blob = await onDownloadDocument(documentIdOrUrl, `${type}.pdf`);
+      } else if (documents.documentId) {
+        // Fallback to main document ID
+        console.log(`Downloading using main document ID: ${documents.documentId}`);
+        blob = await onDownloadDocument(documents.documentId, `${type}.pdf`);
+      } else {
+        throw new Error('No download method available');
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -111,6 +125,8 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Download failed:', error);
+      // Show user-friendly error
+      alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setDownloadingTasks(prev => {
         const next = new Set(prev);
@@ -215,7 +231,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                   <span>Ready</span>
                 </span>
               </div>
-              
+
               <div className="flex space-x-2">
                 <button
                   onClick={() => handlePreview(documents.mainDocument!)}
@@ -243,10 +259,10 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
               <Share2 className="w-4 h-4 text-gray-400" />
               <span>Additional Formats & Processing Options</span>
             </h6>
-            
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {documents.processedVersions.map((doc, index) => (
-                <div 
+                <div
                   key={index}
                   className="bg-gray-800/30 rounded-lg p-3 border border-gray-600/20 hover:border-gray-500/40 transition-all duration-200 group"
                 >
@@ -263,7 +279,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                       </p>
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       {getStatusIcon(doc.status)}
@@ -276,32 +292,21 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                         </span>
                       )}
                     </div>
-                    
+
+                    {/* Update the button call to pass the downloadUrl (which is now just a document ID) */}
                     {doc.status === 'completed' ? (
-                      doc.downloadUrl ? (
-                        <a
-                          href={doc.downloadUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-purple-400 hover:text-purple-300 text-xs font-medium flex items-center space-x-1 transition-colors"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Get</span>
-                        </a>
-                      ) : (
-                        <button
-                          onClick={() => handleDownloadProcessedDocument(doc.taskId, doc.type)}
-                          disabled={downloadingTasks.has(doc.taskId)}
-                          className="text-purple-400 hover:text-purple-300 disabled:text-gray-500 text-xs font-medium flex items-center space-x-1 transition-colors"
-                        >
-                          {downloadingTasks.has(doc.taskId) ? (
-                            <Clock className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Download className="w-3 h-3" />
-                          )}
-                          <span>{downloadingTasks.has(doc.taskId) ? 'Getting...' : 'Get'}</span>
-                        </button>
-                      )
+                      <button
+                        onClick={() => handleDownloadProcessedDocument(doc.taskId, doc.type, doc.downloadUrl)}
+                        disabled={downloadingTasks.has(doc.taskId)}
+                        className="text-purple-400 hover:text-purple-300 disabled:text-gray-500 text-xs font-medium flex items-center space-x-1 transition-colors"
+                      >
+                        {downloadingTasks.has(doc.taskId) ? (
+                          <Clock className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        <span>{downloadingTasks.has(doc.taskId) ? 'Getting...' : 'Get'}</span>
+                      </button>
                     ) : doc.status === 'processing' ? (
                       <span className="text-xs text-yellow-400 flex items-center space-x-1">
                         <Clock className="w-3 h-3 animate-spin" />
@@ -353,7 +358,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <div className="flex-1 p-4 overflow-hidden">
               <iframe
                 src={previewUrl}
@@ -361,7 +366,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                 title="Document Preview"
               />
             </div>
-            
+
             <div className="p-4 border-t border-gray-700 flex justify-end space-x-3">
               <button
                 onClick={closePreview}

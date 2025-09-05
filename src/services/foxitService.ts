@@ -37,6 +37,14 @@ interface FoxitTaskResponse {
   downloadUrl?: string;
 }
 
+interface TaskStatusResponse {
+  taskId: string;
+  status: 'processing' | 'completed' | 'failed';
+  message: string;
+  downloadUrl?: string;
+  documentId?: string;
+}
+
 interface FoxitDocumentGenerationResponse {
   message: string;
   fileExtension: string;
@@ -71,9 +79,9 @@ interface ImageConversionRequestBody {
 }
 
 export class FoxitService {
-  private baseUrl: string;
-  private documentGenerationUrl: string;
-  private pdfServicesUrl: string;
+  public baseUrl: string;  // Changed from private to public
+  public documentGenerationUrl: string;  // Changed from private to public
+  public pdfServicesUrl: string;  // Changed from private to public
   private clientId: string;
   private clientSecret: string;
 
@@ -391,33 +399,68 @@ export class FoxitService {
   }
 
   /**
-   * Download a document by its ID
-   */
-  async downloadDocument(documentId: string, filename?: string): Promise<Blob> {
+ * Download a document by its ID or URL
+ */
+  async downloadDocument(documentIdOrUrl: string, filename?: string): Promise<Blob> {
     try {
-      const url = new URL(`${this.pdfServicesUrl}/api/documents/${documentId}/download`);
-      if (filename) {
-        url.searchParams.set('filename', filename);
+      let url: string;
+
+      // Check if it's already a full URL (starts with http or contains /api/foxit/)
+      if (documentIdOrUrl.startsWith('http') || documentIdOrUrl.includes('/api/foxit/')) {
+        // It's already a full URL, use it as-is
+        url = documentIdOrUrl;
+
+        // Add filename parameter if provided and not already present
+        if (filename && !url.includes('filename=')) {
+          const separator = url.includes('?') ? '&' : '?';
+          url = `${url}${separator}filename=${encodeURIComponent(filename)}`;
+        }
+      } else {
+        // It's a document ID, build the download URL
+        url = `${this.pdfServicesUrl}/api/documents/${documentIdOrUrl}/download`;
+
+        // Add filename parameter if provided
+        if (filename) {
+          const params = new URLSearchParams({ filename });
+          url = `${url}?${params.toString()}`;
+        }
       }
 
-      const response = await fetch(url.toString(), {
+      console.log(`Downloading document from: ${url}`);
+
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
+          'Authorization': `Basic ${btoa(`${this.clientId}:${this.clientSecret}`)}`,
           'client_id': this.clientId,
           'client_secret': this.clientSecret,
+          'Accept': 'application/octet-stream, application/pdf, */*',
         },
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Download response:', response.status, errorText);
-        throw new Error(`Download failed: ${response.status}`);
+
+        // Provide more specific error messages
+        if (response.status === 404) {
+          throw new Error('Document not found or has expired (24-hour retention)');
+        } else if (response.status === 401 || response.status === 403) {
+          throw new Error('Authentication failed - check API credentials');
+        } else if (response.status === 500) {
+          throw new Error('Server error - document may not be ready for download yet');
+        } else {
+          throw new Error(`Download failed: ${response.status} - ${errorText}`);
+        }
       }
 
       return await response.blob();
 
     } catch (error) {
       console.error('Document download error:', error);
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error('Failed to download document');
     }
   }
@@ -766,4 +809,102 @@ export class FoxitService {
     // Remove duplicates and return unique colors
     return [...new Set(palette)].slice(0, 8);
   }
+
+
+  /**
+ * Check the status of a processing task with corrected URL generation
+ */
+  async checkTaskStatus(taskId: string): Promise<TaskStatusResponse> {
+    try {
+      const url = `${this.pdfServicesUrl}/api/tasks/${taskId}`;
+
+      console.log(`Checking task status at: ${url}`);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${btoa(`${this.clientId}:${this.clientSecret}`)}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'client_id': this.clientId,
+          'client_secret': this.clientSecret,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Task status response: ${response.status}`, errorText);
+
+        if (response.status === 404) {
+          return {
+            taskId,
+            status: 'failed',
+            message: 'Task not found - may have expired or completed',
+          };
+        }
+
+        throw new Error(`Task status check failed: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log(`Task ${taskId} full response:`, result);
+
+      // Map Foxit's response format to our expected format
+      const mappedStatus = this.mapFoxitStatusToOurFormat(result.status || result.state);
+
+      // Handle the resultDocumentId from Foxit's response
+      const documentId = result.resultDocumentId || result.documentId || result.outputDocumentId;
+
+      // Log what we found for debugging
+      console.log(`Task ${taskId} parsed:`, {
+        status: mappedStatus,
+        documentId,
+        originalStatus: result.status || result.state,
+        allFields: Object.keys(result)
+      });
+
+      // Generate download URL correctly - just pass the document ID, not the full path
+      let downloadUrl: string | undefined;
+      if (mappedStatus === 'completed' && documentId) {
+        // FIXED: Pass only the document ID, not the full URL path
+        downloadUrl = documentId; // Just the document ID
+        console.log(`Will use document ID for download: ${documentId}`);
+      }
+
+      return {
+        taskId: result.taskId || taskId,
+        status: mappedStatus,
+        message: result.message || `Task is ${mappedStatus}`,
+        downloadUrl: downloadUrl, // This will be the document ID
+        documentId: documentId
+      };
+
+    } catch (error) {
+      console.error('Task status check error:', error);
+
+      return {
+        taskId,
+        status: 'failed',
+        message: `Status check failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
+  /**
+   * Helper method to map Foxit's status values to our expected format
+   */
+  private mapFoxitStatusToOurFormat(foxitStatus: string): 'processing' | 'completed' | 'failed' {
+    switch (foxitStatus?.toUpperCase()) {
+      case 'PENDING':
+      case 'PROCESSING':
+        return 'processing';
+      case 'COMPLETED':
+        return 'completed';
+      case 'FAILED':
+      default:
+        return 'failed';
+    }
+  }
 }
+
+export type { TaskStatusResponse };

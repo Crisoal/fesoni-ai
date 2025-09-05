@@ -249,6 +249,7 @@ const ChatInterface: React.FC = () => {
     }
   };
 
+  // Update the pollProcessingStatus method:
   const pollProcessingStatus = async (documents: StyleDocuments, messageId: string) => {
     if (!documents.processedVersions) return;
 
@@ -258,16 +259,29 @@ const ChatInterface: React.FC = () => {
         const updatedVersions = await Promise.all(
           documents.processedVersions!.map(async (version) => {
             if (version.status === 'processing') {
-              // This would use a real task status API - for now, simulate completion
-              const randomDelay = Math.random() * 10000 + 5000; // 5-15 seconds
-              if (Date.now() - parseInt(messageId) > randomDelay) {
-                return {
-                  ...version,
-                  status: 'completed' as const,
-                  downloadUrl: `https://example.com/download/${version.taskId}`, // Mock URL
-                  size: Math.floor(Math.random() * 2000000) + 500000 // Mock size
-                };
-              } else {
+              try {
+                // Use the real Foxit task status API
+                const taskStatus = await foxitService.checkTaskStatus(version.taskId);
+
+                if (taskStatus.status === 'completed') {
+                  return {
+                    ...version,
+                    status: 'completed' as const,
+                    downloadUrl: taskStatus.downloadUrl || `${foxitService.pdfServicesUrl}/api/documents/${taskStatus.documentId}/download`,
+                    size: undefined // Size will be determined when downloaded
+                  };
+                } else if (taskStatus.status === 'failed') {
+                  return {
+                    ...version,
+                    status: 'failed' as const
+                  };
+                } else {
+                  allCompleted = false;
+                  return version;
+                }
+              } catch (error) {
+                console.error(`Task status check failed for ${version.taskId}:`, error);
+                // Keep as processing, will retry on next poll
                 allCompleted = false;
                 return version;
               }
@@ -292,44 +306,101 @@ const ChatInterface: React.FC = () => {
         if (allCompleted) {
           clearInterval(pollInterval);
 
-          // Add completion message
-          const completionMessage: Message = {
+          // Count successful completions
+          const completedTasks = updatedVersions.filter(v => v.status === 'completed').length;
+          const failedTasks = updatedVersions.filter(v => v.status === 'failed').length;
+
+          let completionMessage = '';
+          if (completedTasks > 0 && failedTasks === 0) {
+            completionMessage = "All your style documents are now ready! You can download the compressed version for easy sharing, grab the social media images to post your style inspiration, or use the quick reference pages for fast outfit planning.";
+          } else if (completedTasks > 0 && failedTasks > 0) {
+            completionMessage = `${completedTasks} of your style documents are ready for download! ${failedTasks} processing task(s) encountered issues, but your main document and other versions are available.`;
+          } else {
+            completionMessage = "Your main style document is ready! Some additional processing tasks encountered issues, but you can still download and use your personalized style guide.";
+          }
+
+          const completionMsg: Message = {
             id: (Date.now() + 3).toString(),
             role: 'assistant',
-            content: "All your style documents are now ready! You can download the compressed version for easy sharing, grab the social media images to post your style inspiration, or use the quick reference pages for fast outfit planning. Everything is optimized and ready to use!",
+            content: completionMessage,
             timestamp: new Date(),
           };
-          setMessages(prev => [...prev, completionMessage]);
+          setMessages(prev => [...prev, completionMsg]);
         }
 
       } catch (error) {
         console.error('Status polling error:', error);
         clearInterval(pollInterval);
-      }
-    }, 3000); // Poll every 3 seconds
 
-    // Stop polling after 2 minutes
+        // Add error message but don't fail completely
+        const errorMsg: Message = {
+          id: (Date.now() + 4).toString(),
+          role: 'assistant',
+          content: "I encountered an issue checking the status of your additional document versions. Your main style guide is still available for download, and I'll continue helping you with your style needs!",
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMsg]);
+      }
+    }, 5000); // Poll every 5 seconds (reasonable interval)
+
+    // Stop polling after 5 minutes to avoid infinite polling
     setTimeout(() => {
       clearInterval(pollInterval);
-    }, 120000);
+
+      // Check if there are still processing tasks and notify user
+      setMessages(prev => {
+        const currentMsg = prev.find(msg => msg.id === messageId);
+        if (currentMsg?.styleDocuments?.processedVersions?.some(v => v.status === 'processing')) {
+          const timeoutMsg: Message = {
+            id: (Date.now() + 5).toString(),
+            role: 'assistant',
+            content: "Some document processing tasks are taking longer than expected. Your main style guide is ready, and completed versions are available for download. You can continue with your styling or ask me any questions!",
+            timestamp: new Date(),
+          };
+          return [...prev, timeoutMsg];
+        }
+        return prev;
+      });
+    }, 300000); // 5 minutes timeout
   };
 
-  const handleDownloadDocument = async (documentId: string, filename?: string): Promise<Blob> => {
+  // Update the handleDownloadDocument method in ChatInterface.tsx:
+  const handleDownloadDocument = async (documentIdOrUrl: string, filename?: string): Promise<Blob> => {
     try {
-      return await foxitService.downloadDocument(documentId, filename);
+      console.log(`Attempting to download: ${documentIdOrUrl}`);
+
+      // Use the Foxit service download method which handles both URLs and document IDs
+      return await foxitService.downloadDocument(documentIdOrUrl, filename);
+
     } catch (error) {
       console.error('Download error:', error);
-      throw new Error('Failed to download document');
+
+      // Provide user-friendly error message
+      let errorMessage = 'Failed to download document';
+      if (error instanceof Error) {
+        if (error.message.includes('expired')) {
+          errorMessage = 'Document has expired (available for 24 hours only)';
+        } else if (error.message.includes('not ready')) {
+          errorMessage = 'Document is still processing. Please try again in a moment.';
+        } else if (error.message.includes('Authentication')) {
+          errorMessage = 'Authentication error. Please refresh and try again.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+
+      throw new Error(errorMessage);
     }
   };
 
+  // Update the handleCheckTaskStatus method:
   const handleCheckTaskStatus = async (taskId: string) => {
     try {
-      // This would integrate with a real task status checking service
-      // For now, return a mock response
+      const taskStatus = await foxitService.checkTaskStatus(taskId);
       return {
-        status: 'completed' as const,
-        downloadUrl: `https://example.com/download/${taskId}`
+        status: taskStatus.status,
+        downloadUrl: taskStatus.downloadUrl ||
+          (taskStatus.documentId ? `${foxitService.pdfServicesUrl}/api/documents/${taskStatus.documentId}/download` : undefined)
       };
     } catch (error) {
       console.error('Task status check error:', error);
