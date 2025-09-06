@@ -34,7 +34,7 @@ export class OpenAIService {
 
   constructor() {
     this.apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-    this.baseUrl = import.meta.env.VITE_OPENAI_BASE_URL;
+    this.baseUrl = import.meta.env.VITE_OPENAI_BASE_URL || 'https://api.openai.com/v1';
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {

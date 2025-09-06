@@ -1,11 +1,15 @@
 // src/components/ChatInterface.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, ShoppingBag, AlertCircle } from 'lucide-react';
+import { Send, Sparkles, ShoppingBag, AlertCircle, Camera, Upload } from 'lucide-react';
 import { OpenAIService, AnalysisResponse } from '../services/openaiService';
 import { AmazonService, AmazonProduct } from '../services/amazonService';
 import { FoxitService, StylePortfolioData } from '../services/foxitService';
+import { VisionService } from '../services/visionService';
+import { ReverseSearchService, OptimizedProduct } from '../services/reverseSearchService';
 import ProductCard from './ProductCard';
 import StyleDocumentToolbar from './StyleDocumentToolbar';
+import ImageUpload from './ImageUpload';
+import BudgetOptimizer from './BudgetOptimizer';
 
 interface StyleDocuments {
   mainDocument?: string; // base64 string
@@ -24,9 +28,15 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
-  products?: AmazonProduct[];
+  products?: AmazonProduct[] | OptimizedProduct[];
   styleDocuments?: StyleDocuments;
   portfolioData?: StylePortfolioData; // Add portfolio data for toolbar access
+  imageAnalysis?: {
+    uploadedImage: string;
+    analysis: any;
+    budget?: number;
+  };
+  showBudgetOptimizer?: boolean;
 }
 
 const ChatInterface: React.FC = () => {
@@ -35,11 +45,15 @@ const ChatInterface: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingDocuments, setIsGeneratingDocuments] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const [showImageUpload, setShowImageUpload] = useState(false);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const openaiService = new OpenAIService();
   const amazonService = new AmazonService();
   const foxitService = new FoxitService();
+  const visionService = new VisionService();
+  const reverseSearchService = new ReverseSearchService();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,6 +62,136 @@ const ChatInterface: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const handleImageStyleAnalysis = async (analysis: any, budget?: number) => {
+    setIsAnalyzingImage(true);
+    setShowImageUpload(false);
+
+    try {
+      // Create a message showing the analysis
+      const analysisMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Perfect! I've analyzed your style inspiration and identified it as **${analysis.overallStyle}**. 
+
+${analysis.description}
+
+Now I'm searching for products that match these style elements${budget ? ` within your $${budget} budget` : ''}...`,
+        timestamp: new Date(),
+        imageAnalysis: {
+          uploadedImage: '', // Would contain the uploaded image
+          analysis,
+          budget
+        }
+      };
+
+      setMessages(prev => [...prev, analysisMessage]);
+
+      // Perform reverse search based on analysis
+      const searchParams = {
+        aesthetics: analysis.aesthetics.map((a: any) => a.name),
+        colors: analysis.colors.map((c: any) => c.name),
+        textures: analysis.textures.map((t: any) => t.name),
+        silhouettes: analysis.silhouettes.map((s: any) => s.name),
+        mood: analysis.mood.map((m: any) => m.name),
+        searchKeywords: analysis.searchKeywords || [],
+        budget
+      };
+
+      const searchResult = await reverseSearchService.searchByStyle(searchParams, 16);
+
+      // Create portfolio data for the found products
+      const portfolioData: StylePortfolioData = {
+        userPreferences: {
+          aesthetics: searchParams.aesthetics,
+          productTypes: ['fashion'],
+          budget: budget ? `$${budget}` : undefined,
+          lifestyle: searchParams.mood[0] || 'general',
+        },
+        products: searchResult.products.slice(0, 12).map(product => ({
+          product_id: product.product_id,
+          title: product.title,
+          url: product.url,
+          image: product.image,
+          price: product.price,
+          category: product.category || 'Fashion',
+          brand: product.brand || product.manufacturer || '',
+          rating: product.rating || 0,
+          reviews: product.reviews || 0,
+          prime: product.prime || false,
+          retail_price: product.retail_price || product.price
+        })),
+        metadata: {
+          userName: 'Style Enthusiast',
+          createdDate: new Date().toISOString(),
+          season: getCurrentSeason(),
+          occasion: 'style-match'
+        }
+      };
+
+      // Create results message
+      const resultsMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `Amazing! I found ${searchResult.products.length} products that match your style inspiration. ${searchResult.searchStrategy}
+
+${budget && searchResult.budgetAnalysis ? 
+  `**Budget Analysis:**
+  • ${searchResult.budgetAnalysis.withinBudget} products within your $${budget} budget
+  • ${searchResult.budgetAnalysis.overBudget} premium alternatives
+  • Average price: $${searchResult.budgetAnalysis.averagePrice}
+  ${searchResult.budgetAnalysis.recommendedBudget > budget ? 
+    `• Recommended budget for this style: $${searchResult.budgetAnalysis.recommendedBudget}` : ''}` 
+  : ''}
+
+Each product shows a similarity score - look for 90%+ matches for exact style replication, or 70%+ for inspired alternatives. Use the budget optimizer below to fine-tune your selections!`,
+        timestamp: new Date(),
+        products: searchResult.products,
+        portfolioData,
+        showBudgetOptimizer: budget !== undefined
+      };
+
+      setMessages(prev => [...prev, resultsMessage]);
+
+      // Generate style documents if we have good matches
+      if (searchResult.products.length > 0) {
+        await generateStyleDocuments(
+          {
+            styleAnalysis: {
+              aesthetics: searchParams.aesthetics,
+              productTypes: ['fashion'],
+              budget: budget ? `$${budget}` : undefined,
+              lifestyle: searchParams.mood[0] || 'general'
+            },
+            followUpQuestions: [],
+            recommendedCategories: []
+          },
+          searchResult.products,
+          resultsMessage.id
+        );
+      }
+
+    } catch (error) {
+      console.error('Image analysis error:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'I encountered an issue analyzing your image. Please try uploading a different image or describe your style preferences in text.',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsAnalyzingImage(false);
+    }
+  };
+
+  const handleProductsUpdate = (messageId: string, updatedProducts: OptimizedProduct[]) => {
+    setMessages(prev => prev.map(msg =>
+      msg.id === messageId
+        ? { ...msg, products: updatedProducts }
+        : msg
+    ));
+  };
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -402,8 +546,31 @@ const ChatInterface: React.FC = () => {
             Fesoni
           </h1>
           <span className="text-sm text-gray-400">Your AI Shopping Assistant</span>
+          
+          {/* Image Upload Toggle */}
+          <button
+            onClick={() => setShowImageUpload(!showImageUpload)}
+            className={`ml-4 p-2 rounded-full transition-all duration-200 ${
+              showImageUpload 
+                ? 'bg-purple-600 text-white' 
+                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            }`}
+            title="Upload style inspiration image"
+          >
+            <Camera className="w-4 h-4" />
+          </button>
         </div>
       </div>
+
+      {/* Image Upload Section */}
+      {showImageUpload && (
+        <div className="flex-shrink-0 p-6 border-b border-gray-800">
+          <ImageUpload 
+            onStyleAnalysis={handleImageStyleAnalysis}
+            isAnalyzing={isAnalyzingImage}
+          />
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -413,7 +580,12 @@ const ChatInterface: React.FC = () => {
             <div className="flex justify-start">
               <div className="max-w-2xl p-4 rounded-2xl bg-gray-900 text-gray-100 mr-12 border border-gray-800">
                 <p className="whitespace-pre-wrap leading-relaxed">
-                  Hi! I'm Fesoni, your AI shopping assistant. I'm here to understand your unique style and help you discover products that match your vibe. I'll also create personalized style documentation for you! Tell me about your style preferences, what you're looking for, or describe the aesthetic you're going for!
+                  Hi! I'm Fesoni, your AI shopping assistant. I can help you in two ways:
+                  
+                  📸 **Upload a style inspiration image** - I'll analyze the photo and find similar products
+                  💬 **Describe your style** - Tell me about your aesthetic and I'll curate products for you
+                  
+                  I'll also create personalized style documentation and help optimize your budget. What would you like to explore today?
                 </p>
               </div>
             </div>
@@ -438,7 +610,9 @@ const ChatInterface: React.FC = () => {
                 <div className="mr-12">
                   <div className="flex items-center space-x-2 mb-4">
                     <ShoppingBag className="w-4 h-4 text-purple-400" />
-                    <h3 className="text-sm font-medium text-gray-300">Curated for your style</h3>
+                    <h3 className="text-sm font-medium text-gray-300">
+                      {message.imageAnalysis ? 'Style matches from your image' : 'Curated for your style'}
+                    </h3>
                   </div>
                   {/* Horizontal scroll container */}
                   <div className="overflow-x-auto scrollbar-hide">
@@ -449,11 +623,27 @@ const ChatInterface: React.FC = () => {
                           category: product.category || inferProductCategory(product.title)
                         };
                         return (
-                          <ProductCard key={index} product={productWithCategory} />
+                          <ProductCard 
+                            key={index} 
+                            product={productWithCategory}
+                            showSimilarityScore={'similarity_score' in product}
+                            similarityScore={'similarity_score' in product ? (product as OptimizedProduct).similarity_score : undefined}
+                          />
                         );
                       })}
                     </div>
                   </div>
+
+                  {/* Budget Optimizer */}
+                  {message.showBudgetOptimizer && message.products && (
+                    <div className="mt-6">
+                      <BudgetOptimizer
+                        products={message.products as OptimizedProduct[]}
+                        budget={message.imageAnalysis?.budget}
+                        onProductsUpdate={(updatedProducts) => handleProductsUpdate(message.id, updatedProducts)}
+                      />
+                    </div>
+                  )}
 
                   {/* Style Document Toolbar - Always show when products exist and portfolioData is available */}
                   {message.portfolioData && (
@@ -479,6 +669,8 @@ const ChatInterface: React.FC = () => {
                   <span>
                     {isGeneratingDocuments
                       ? 'Creating your personalized style documents...'
+                      : isAnalyzingImage
+                      ? 'Analyzing your image and finding matching products...'
                       : 'Analyzing your style and finding perfect products...'
                     }
                   </span>
@@ -514,17 +706,20 @@ const ChatInterface: React.FC = () => {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Describe your style, what you're looking for, or the vibe you want to achieve..."
+                placeholder={showImageUpload 
+                  ? "Upload an image above or describe your style here..." 
+                  : "Describe your style, what you're looking for, or the vibe you want to achieve..."
+                }
                 className="w-full p-4 pr-12 bg-gray-900 border border-gray-700 rounded-2xl 
                           text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 
                           focus:border-transparent resize-none min-h-[60px] max-h-32"
                 rows={2}
-                disabled={isLoading || isGeneratingDocuments}
+                disabled={isLoading || isGeneratingDocuments || isAnalyzingImage}
               />
             </div>
             <button
               onClick={handleSendMessage}
-              disabled={!inputValue.trim() || isLoading || isGeneratingDocuments}
+              disabled={!inputValue.trim() || isLoading || isGeneratingDocuments || isAnalyzingImage}
               className="p-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 
                         disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl transition-all duration-200
                         focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-black"
@@ -534,10 +729,15 @@ const ChatInterface: React.FC = () => {
           </div>
 
           {/* Document Generation Status */}
-          {isGeneratingDocuments && (
+          {(isGeneratingDocuments || isAnalyzingImage) && (
             <div className="mt-3 flex items-center justify-center space-x-2 text-sm text-gray-400">
               <Sparkles className="w-4 h-4" />
-              <span>Generating personalized style documentation...</span>
+              <span>
+                {isGeneratingDocuments 
+                  ? 'Generating personalized style documentation...'
+                  : 'Analyzing image and finding style matches...'
+                }
+              </span>
             </div>
           )}
         </div>
