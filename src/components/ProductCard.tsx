@@ -19,15 +19,9 @@ interface Product {
 
 interface ProductCardProps {
   product: Product;
-  showSimilarityScore?: boolean;
-  similarityScore?: number;
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ 
-  product, 
-  showSimilarityScore = false, 
-  similarityScore 
-}) => {
+const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const hasDiscount = product.retail_price > 0 && product.price < product.retail_price;
   const discountPercentage = hasDiscount 
     ? Math.round(((product.retail_price - product.price) / product.retail_price) * 100)
@@ -96,17 +90,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <div className="absolute top-3 right-3 bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center space-x-1">
             <Prime className="w-3 h-3" />
             <span>Prime</span>
-          </div>
-        )}
-
-        {/* Similarity Score Badge */}
-        {showSimilarityScore && similarityScore !== undefined && (
-          <div className={`absolute bottom-3 left-3 text-white text-xs font-bold px-2 py-1 rounded-full ${
-            similarityScore >= 0.9 ? 'bg-green-600' :
-            similarityScore >= 0.7 ? 'bg-yellow-600' :
-            'bg-orange-600'
-          }`}>
-            {Math.round(similarityScore * 100)}% match
           </div>
         )}
       </div>
